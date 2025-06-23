@@ -1,12 +1,12 @@
 # Nebulex.Adapters.DiskLFU
-> A [Nebulex][Nebulex] adapter for a disk-based LFU cache.
-
-[Nebulex]: http://github.com/elixir-nebulex/nebulex
+> A Nebulex adapter for a disk-based LFU cache.
 
 ![CI](http://github.com/elixir-nebulex/nebulex_disk_lfu/workflows/CI/badge.svg)
 [![Codecov](http://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)](http://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)
 [![Hex Version](http://img.shields.io/hexpm/v/nebulex_disk_lfu.svg)](http://hex.pm/packages/nebulex_disk_lfu)
 [![Documentation](http://img.shields.io/badge/Documentation-ff69b4)](http://hexdocs.pm/nebulex_disk_lfu)
+
+_**Still under development!**_
 
 ## Installation
 
@@ -15,10 +15,16 @@ Add `:nebulex_disk_lfu` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:nebulex_disk_lfu, "~> 3.0.0-rc.1"}
+    {:nebulex_disk_lfu, "~> 0.1"}
   ]
 end
 ```
+
+---
+> [!NOTE]
+>
+> `Nebulex.Adapters.DiskLFU` is only compatible with Nebulex v3.0.0 or later.
+---
 
 See the [online documentation](http://hexdocs.pm/nebulex_disk_lfu/)
 for more information.
@@ -70,6 +76,10 @@ thoroughly, include unit tests alongside new or changed code.
 
 Before to submit a PR it is highly recommended to run `mix test.ci` and ensure
 all checks run successfully.
+
+## Sponsor
+
+- [StanfordTax](http://stanfordtax.com/)
 
 ## Copyright and License
 

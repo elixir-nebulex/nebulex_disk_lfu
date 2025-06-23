@@ -6,6 +6,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
   use GenServer
 
+  import Nebulex.Time, only: [now: 0]
   import Nebulex.Utils, only: [camelize_and_concat: 1]
 
   alias Nebulex.Adapters.DiskLFU.Meta
@@ -40,11 +41,12 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
     # Write the binary to disk atomically
     with_lock(base_path, Keyword.get(opts, :retries, :infinity), fn ->
-      # Get the modes to write the binary to disk
+      # Get the cache options
       modes = Keyword.get(opts, :modes, [])
+      ttl = Keyword.fetch!(opts, :ttl)
 
       # Build the metadata
-      meta = Meta.new(base_path, binary)
+      meta = Meta.new(binary, base_path: base_path, expires_at: expires_at(ttl))
       encoded_meta = Meta.encode(meta)
 
       # Write the binary to disk
@@ -74,97 +76,104 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @doc """
   Reads the binary from disk.
   """
-  @spec read_from_disk(atom(), String.t()) :: {:ok, {Meta.t(), binary()}} | {:error, any()}
+  @spec read_from_disk(atom(), String.t(), timeout()) ::
+          {:ok, {Meta.t(), binary()}} | {:error, any()}
   def read_from_disk(meta_table, key, retries \\ :infinity) do
     # Get the hash for the key
     hash_key = hash_key(key)
 
-    with {:ok, %Meta{base_path: path} = meta} <- do_fetch_meta(meta_table, hash_key) do
-      with_lock(path, retries, fn ->
-        # Build the paths for the given key
-        meta_tmp = path <> ".meta.tmp"
-        meta_final = path <> ".meta"
+    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} = meta ->
+      # Build the paths for the given key
+      meta_tmp = path <> ".meta.tmp"
+      meta_final = path <> ".meta"
 
-        # Read the binary from disk and write the metadata to disk atomically
-        with {:ok, binary} <- File.read(path <> ".cache"),
-             meta = Meta.update_access_count(meta),
-             :ok <- File.write(meta_tmp, Meta.encode(meta)),
-             :ok = flush_to_disk(meta_tmp),
-             :ok <- File.rename(meta_tmp, meta_final) do
-          # Update the meta table
-          true = :ets.insert(meta_table, {hash_key, meta})
+      # Read the binary from disk and write the metadata to disk atomically
+      with {:ok, binary} <- File.read(path <> ".cache"),
+           meta = Meta.update_access_count(meta),
+           :ok <- File.write(meta_tmp, Meta.encode(meta)),
+           :ok = flush_to_disk(meta_tmp),
+           :ok <- File.rename(meta_tmp, meta_final) do
+        # Update the meta table
+        true = :ets.insert(meta_table, {hash_key, meta})
 
-          {:ok, {meta, binary}}
-        end
-      end)
-    end
+        {:ok, {binary, meta}}
+      end
+    end)
   end
 
   @doc """
   Deletes the binary from disk.
   """
-  @spec delete_from_disk(atom(), String.t()) :: :ok | {:error, any()}
+  @spec delete_from_disk(atom(), String.t(), timeout()) :: :ok | {:error, any()}
   def delete_from_disk(meta_table, key, retries \\ :infinity) do
     # Get the hash for the key
     hash_key = hash_key(key)
 
-    # Check if the key exists in the meta table
-    with {:ok, %Meta{base_path: path}} <- do_fetch_meta(meta_table, hash_key) do
-      # Delete the metadata and binary atomically
-      with_lock(path, retries, fn ->
-        with :ok <- safe_rm(path <> ".meta"),
-             :ok <- safe_rm(path <> ".cache") do
-          # Delete the key from the meta table
-          true = :ets.delete(meta_table, hash_key)
-
-          :ok
-        end
-      end)
-    end
+    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} ->
+      safe_remove(meta_table, hash_key, path)
+    end)
   end
 
   @doc """
   Pops the binary from disk.
   """
-  @spec pop_from_disk(atom(), String.t()) :: {:ok, {Meta.t(), binary()}} | {:error, any()}
+  @spec pop_from_disk(atom(), String.t(), timeout()) ::
+          {:ok, {Meta.t(), binary()}} | {:error, any()}
   def pop_from_disk(meta_table, key, retries \\ :infinity) do
     # Get the hash for the key
     hash_key = hash_key(key)
 
-    # Check if the key exists in the meta table
-    with {:ok, %Meta{base_path: path} = meta} <- do_fetch_meta(meta_table, hash_key) do
-      # Delete the metadata and binary atomically
-      with_lock(path, retries, fn ->
-        with {:ok, binary} <- File.read(path <> ".cache"),
-             :ok <- safe_rm(path <> ".meta"),
-             :ok <- safe_rm(path <> ".cache") do
-          # Delete the key from the meta table
-          true = :ets.delete(meta_table, hash_key)
-
-          {:ok, {meta, binary}}
-        end
-      end)
-    end
-  end
-
-  @doc """
-  Checks if the key exists in the meta table.
-  """
-  @spec exists?(atom(), String.t()) :: boolean()
-  def exists?(meta_table, key) do
-    case fetch_meta(meta_table, key) do
-      {:ok, _} -> true
-      {:error, :not_found} -> false
-    end
+    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} = meta ->
+      with {:ok, binary} <- File.read(path <> ".cache"),
+           :ok <- safe_remove(meta_table, hash_key, path) do
+        {:ok, {meta, binary}}
+      end
+    end)
   end
 
   @doc """
   Fetches the meta for the given key.
   """
-  @spec fetch_meta(atom(), String.t()) :: {:ok, Meta.t()} | {:error, :not_found}
-  def fetch_meta(meta_table, key) do
-    do_fetch_meta(meta_table, hash_key(key))
+  @spec fetch_meta(atom(), String.t(), timeout()) :: {:ok, Meta.t()} | {:error, :not_found}
+  def fetch_meta(meta_table, key, retries \\ :infinity) do
+    with_meta(meta_table, hash_key(key), retries, &{:ok, &1})
   end
+
+  @doc """
+  Updates the meta for the given key.
+  """
+  @spec update_meta(atom(), String.t(), timeout(), (Meta.t() -> Meta.t())) :: :ok | {:error, any()}
+  def update_meta(meta_table, key, retries \\ :infinity, fun) do
+    # Get the hash for the key
+    hash_key = hash_key(key)
+
+    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} = meta ->
+      # Build the metadata path
+      meta_final = path <> ".meta"
+
+      # Write the metadata to disk atomically
+      with {:ok, _encoded_meta} <- File.read(meta_final),
+           meta = fun.(meta),
+           :ok <- File.write(meta_final, Meta.encode(meta)) do
+        # Flush the metadata to disk
+        :ok = flush_to_disk(meta_final)
+
+        # Update the meta table
+        true = :ets.insert(meta_table, {hash_key, meta})
+
+        :ok
+      end
+    end)
+  end
+
+  @doc """
+  Calculates the expiration time for the given TTL.
+  """
+  @spec expires_at(timeout()) :: timeout()
+  def expires_at(ttl)
+
+  def expires_at(:infinity), do: :infinity
+  def expires_at(ttl), do: now() + ttl
 
   # @doc """
   # Deletes all the entries from disk.
@@ -236,10 +245,47 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     end
   end
 
-  defp do_fetch_meta(meta_table, hash_key) do
+  defp with_meta(meta_table, hash_key, retries, fun) do
     case :ets.lookup(meta_table, hash_key) do
-      [{^hash_key, meta}] -> {:ok, meta}
-      [] -> {:error, :not_found}
+      [{^hash_key, %Meta{base_path: path} = meta}] ->
+        with_lock(path, retries, fn -> maybe_remove_expired(meta, meta_table, hash_key, fun) end)
+
+      [] ->
+        {:error, :not_found}
+    end
+  end
+
+  defp maybe_remove_expired(
+         %Meta{expires_at: expires_at, base_path: path} = meta,
+         meta_table,
+         hash_key,
+         fun
+       ) do
+    now = now()
+
+    if expires_at == :infinity or (is_integer(expires_at) and expires_at > now) do
+      fun.(meta)
+    else
+      with :ok <- safe_remove(meta_table, hash_key, path) do
+        {:error, :expired}
+      end
+    end
+  end
+
+  defp safe_remove(meta_table, hash_key, path) do
+    # Remove the metadata and binary from disk
+    with :ok <- safe_rm(path <> ".meta"),
+         :ok <- safe_rm(path <> ".cache") do
+      # Delete the key from the meta table
+      true = :ets.delete(meta_table, hash_key)
+
+      :ok
+    end
+  end
+
+  defp safe_rm(path) do
+    with {:error, :enoent} <- File.rm(path) do
+      :ok
     end
   end
 
@@ -319,12 +365,6 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     end
   after
     Process.delete({:lock, base_path})
-  end
-
-  defp safe_rm(path) do
-    with {:error, :enoent} <- File.rm(path) do
-      :ok
-    end
   end
 
   # defp cleanup_all(_meta_table, _cache_dir, :"$end_of_table") do

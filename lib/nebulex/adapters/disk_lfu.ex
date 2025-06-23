@@ -8,9 +8,10 @@ defmodule Nebulex.Adapters.DiskLFU do
   @behaviour Nebulex.Adapter.KV
 
   import Nebulex.Adapter
+  import Nebulex.Time, only: [now: 0]
   import Nebulex.Utils
 
-  alias __MODULE__.{Options, Store}
+  alias __MODULE__.{Meta, Options, Store}
 
   ## Nebulex.Adapter
 
@@ -42,13 +43,15 @@ defmodule Nebulex.Adapters.DiskLFU do
     name = opts[:name] || cache
     cache_dir = Path.join(base_dir, to_string(name))
 
+    # Create the adapter meta
     adapter_meta = %{
       name: name,
       base_dir: base_dir,
       cache_dir: cache_dir,
-      meta_tab: camelize_and_concat([name, Meta])
+      meta_tab: camelize_and_concat([name, "Meta"])
     }
 
+    # Create the child spec for the store
     child_spec =
       Supervisor.child_spec(
         {Store, cache_name: name, cache_dir: cache_dir},
@@ -65,7 +68,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     opts = Options.validate_common_runtime_opts!(opts)
     retries = Keyword.fetch!(opts, :retries)
 
-    with {:ok, {_meta, binary}} <- Store.read_from_disk(meta_tab, key, retries) do
+    with {:ok, {binary, _meta}} <- Store.read_from_disk(meta_tab, key, retries) do
       {:ok, binary}
     end
     |> handle_result(key)
@@ -77,7 +80,7 @@ defmodule Nebulex.Adapters.DiskLFU do
         key,
         value,
         _on_write,
-        _ttl,
+        ttl,
         _keep_ttl?,
         opts
       ) do
@@ -86,14 +89,21 @@ defmodule Nebulex.Adapters.DiskLFU do
     assert_binary(key, "key")
     assert_binary(value, "value")
 
-    with {:ok, _} <- Store.write_to_disk(meta_tab, cache_dir, key, value, opts) do
+    with {:ok, _} <- Store.write_to_disk(meta_tab, cache_dir, key, value, [ttl: ttl] ++ opts) do
       :ok
     end
     |> handle_result()
   end
 
   @impl true
-  def put_all(%{meta_tab: meta_tab, cache_dir: cache_dir}, entries, _on_write, _ttl, opts) do
+  @spec put_all(
+          %{:cache_dir => any(), :meta_tab => any(), optional(any()) => any()},
+          any(),
+          any(),
+          any(),
+          keyword()
+        ) :: any()
+  def put_all(%{meta_tab: meta_tab, cache_dir: cache_dir}, entries, _on_write, ttl, opts) do
     opts = Options.validate_common_runtime_opts!(opts)
 
     entries
@@ -104,7 +114,7 @@ defmodule Nebulex.Adapters.DiskLFU do
       {key, value}
     end)
     |> Enum.reduce_while(:ok, fn {key, value}, acc ->
-      case Store.write_to_disk(meta_tab, cache_dir, key, value, opts) do
+      case Store.write_to_disk(meta_tab, cache_dir, key, value, [ttl: ttl] ++ opts) do
         {:ok, _} -> {:cont, acc}
         {:error, _} = error -> {:halt, error}
       end
@@ -115,8 +125,10 @@ defmodule Nebulex.Adapters.DiskLFU do
   @impl true
   def delete(%{meta_tab: meta_tab}, key, opts) do
     opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
 
-    Store.delete_from_disk(meta_tab, key, Keyword.fetch!(opts, :retries))
+    meta_tab
+    |> Store.delete_from_disk(key, retries)
     |> handle_result(key)
   end
 
@@ -132,26 +144,50 @@ defmodule Nebulex.Adapters.DiskLFU do
   end
 
   @impl true
-  def has_key?(%{meta_tab: meta_tab}, key, _opts) do
-    {:ok, Store.exists?(meta_tab, key)}
+  def has_key?(%{meta_tab: meta_tab}, key, opts) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    case Store.fetch_meta(meta_tab, key, retries) do
+      {:ok, _} -> {:ok, true}
+      {:error, reason} when reason in [:not_found, :expired] -> {:ok, false}
+      {:error, _} = error -> handle_result(error)
+    end
   end
 
   @impl true
-  def ttl(%{meta_tab: meta_tab}, key, _opts) do
-    with {:ok, _} <- Store.fetch_meta(meta_tab, key) do
-      {:ok, :infinity}
+  def ttl(%{meta_tab: meta_tab}, key, opts) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    with {:ok, %Meta{expires_at: expires_at}} <- Store.fetch_meta(meta_tab, key, retries) do
+      {:ok, remaining_ttl(expires_at)}
     end
     |> handle_result(key)
   end
 
   @impl true
-  def expire(%{meta_tab: meta_tab}, key, _ttl, _opts) do
-    {:ok, Store.exists?(meta_tab, key)}
+  def expire(%{meta_tab: meta_tab}, key, ttl, opts) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    case Store.update_meta(meta_tab, key, retries, &%{&1 | expires_at: Store.expires_at(ttl)}) do
+      :ok -> {:ok, true}
+      {:error, :not_found} -> {:ok, false}
+      {:error, _} = error -> handle_result(error)
+    end
   end
 
   @impl true
-  def touch(%{meta_tab: meta_tab}, key, _opts) do
-    {:ok, Store.exists?(meta_tab, key)}
+  def touch(%{meta_tab: meta_tab}, key, opts) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    case Store.update_meta(meta_tab, key, retries, &%{&1 | last_accessed_at: now()}) do
+      :ok -> {:ok, true}
+      {:error, :not_found} -> {:ok, false}
+      {:error, _} = error -> handle_result(error)
+    end
   end
 
   @impl true
@@ -163,8 +199,8 @@ defmodule Nebulex.Adapters.DiskLFU do
 
   defp handle_result(result, ctx \\ :"$no_ctx")
 
-  defp handle_result({:error, :not_found}, key) do
-    wrap_error Nebulex.KeyError, key: key, reason: :not_found
+  defp handle_result({:error, reason}, key) when reason in [:not_found, :expired] do
+    wrap_error Nebulex.KeyError, key: key, reason: reason
   end
 
   defp handle_result({:error, :enoent}, key) when key != :"$no_ctx" do
@@ -184,4 +220,7 @@ defmodule Nebulex.Adapters.DiskLFU do
       raise ArgumentError, "the #{arg_name} must be a binary, got: #{inspect(data)}"
     end
   end
+
+  defp remaining_ttl(:infinity), do: :infinity
+  defp remaining_ttl(expires_at), do: expires_at - now()
 end

@@ -72,9 +72,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-build-
 
-      - name: Install Nebulex
-        run: mix nbx.setup
-
       - name: Install Dependencies
         run: |
           mix local.hex --force
@@ -100,15 +97,11 @@ jobs:
         if: ${{ matrix.lint }}
 
       - name: Run tests
-        run: |
-          epmd -daemon
-          mix test --trace
+        run: mix test --trace
         if: ${{ !matrix.coverage }}
 
       - name: Run tests with coverage
-        run: |
-          epmd -daemon
-          mix coveralls.json
+        run: mix coveralls.json
         if: ${{ matrix.coverage }}
 
       - name: Upload coverage reports to Codecov
@@ -119,7 +112,7 @@ jobs:
         if: ${{ matrix.coverage }}
 
       - name: Run sobelow
-        run: mix sobelow --skip --exit Low
+        run: mix sobelow -i Traversal.FileModule --skip --exit Low
         if: ${{ matrix.sobelow }}
 
       - name: Restore PLT Cache

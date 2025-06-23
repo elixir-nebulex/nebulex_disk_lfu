@@ -46,6 +46,14 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("large_key") == {:ok, large_data}
     end
 
+    test "handles ttl", %{cache: cache} do
+      :ok = cache.put("key", "value", ttl: 1)
+
+      :ok = Process.sleep(100)
+
+      assert {:error, %Nebulex.KeyError{reason: :expired}} = cache.fetch("key")
+    end
+
     test "file has been removed", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -58,7 +66,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
   describe "put" do
     test "puts a value in the cache", %{cache: cache} do
-      assert cache.put("key", "value") == :ok
+      assert cache.put("key", "value", ttl: 1000) == :ok
       assert cache.fetch("key") == {:ok, "value"}
     end
 
@@ -151,6 +159,14 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.delete("nonexistent")
     end
 
+    test "handles ttl", %{cache: cache} do
+      :ok = cache.put("key", "value", ttl: 1)
+
+      :ok = Process.sleep(100)
+
+      assert {:error, %Nebulex.KeyError{reason: :expired}} = cache.delete("key")
+    end
+
     test "can delete and then put the same key again", %{cache: cache} do
       :ok = cache.put("key", "value1")
       :ok = cache.delete("key")
@@ -187,6 +203,14 @@ defmodule Nebulex.Adapters.DiskLFUTest do
         cache.fetch!("binary_key")
       end
     end
+
+    test "handles ttl", %{cache: cache} do
+      :ok = cache.put("key", "value", ttl: 1)
+
+      :ok = Process.sleep(100)
+
+      assert {:error, %Nebulex.KeyError{reason: :expired}} = cache.take("key")
+    end
   end
 
   describe "has_key?" do
@@ -209,6 +233,17 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
       assert cache.has_key?("key") == {:ok, false}
     end
+
+    test "returns an error", %{cache: cache} do
+      :ok = cache.put("key", "value", ttl: 1)
+
+      :ok = Process.sleep(100)
+
+      Nebulex.Adapters.DiskLFU.Store
+      |> Mimic.expect(:fetch_meta, fn _, _, _ -> {:error, :enoent} end)
+
+      assert {:error, %Nebulex.Error{reason: :enoent}} = cache.has_key?("key")
+    end
   end
 
   describe "ttl" do
@@ -216,6 +251,13 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       assert cache.ttl("key") == {:ok, :infinity}
+    end
+
+    test "returns ttl for existing key", %{cache: cache} do
+      :ok = cache.put("key", "value", ttl: :timer.seconds(10))
+
+      assert {:ok, ttl} = cache.ttl("key")
+      assert ttl > 0
     end
 
     test "returns error for non-existent key", %{cache: cache} do
@@ -230,6 +272,9 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       assert cache.expire("key", 1000) == {:ok, true}
+
+      assert {:ok, ttl} = cache.ttl("key")
+      assert ttl > 0
     end
 
     test "returns false for non-existent key", %{cache: cache} do
@@ -244,6 +289,15 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.delete("key")
 
       assert cache.expire("key", 1000) == {:ok, false}
+    end
+
+    test "returns an error", %{cache: cache} do
+      :ok = cache.put("key", "value")
+
+      File
+      |> Mimic.expect(:read, fn _ -> {:error, :enoent} end)
+
+      assert {:error, %Nebulex.Error{reason: :enoent}} = cache.expire("key", 1000)
     end
   end
 
@@ -266,6 +320,15 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.delete("key")
 
       assert cache.touch("key") == {:ok, false}
+    end
+
+    test "returns an error", %{cache: cache} do
+      :ok = cache.put("key", "value")
+
+      File
+      |> Mimic.expect(:read, fn _ -> {:error, :enoent} end)
+
+      assert {:error, %Nebulex.Error{reason: :enoent}} = cache.touch("key")
     end
   end
 

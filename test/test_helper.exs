@@ -1,5 +1,5 @@
 # Mocks
-[File]
+[File, Nebulex.Adapters.DiskLFU.Store]
 |> Enum.each(&Mimic.copy/1)
 
 # Start Telemetry

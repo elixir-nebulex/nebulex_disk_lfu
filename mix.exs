@@ -2,7 +2,7 @@ defmodule NebulexDiskLFU.MixProject do
   use Mix.Project
 
   @source_url "http://github.com/elixir-nebulex/nebulex_disk_lfu"
-  @version "3.0.0-rc.1"
+  @version "0.1.0"
 
   def project do
     [
@@ -82,9 +82,6 @@ defmodule NebulexDiskLFU.MixProject do
   defp package do
     [
       name: :nebulex_disk_lfu,
-      maintainers: [
-        "Carlos Bolanos"
-      ],
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE*)

@@ -1,0 +1,28 @@
+defmodule Nebulex.Adapters.DiskLFU.Helpers do
+  @moduledoc """
+  Helper functions for the disk LFU adapter.
+  """
+
+  ## API
+
+  @doc """
+  Hashes the given key.
+  """
+  @spec hash_key(binary()) :: binary()
+  def hash_key(key) do
+    :sha256
+    |> :crypto.hash(key)
+    |> Base.encode16()
+  end
+
+  @doc """
+  Calculates the checksum for the given data.
+  """
+  @spec checksum(binary()) :: binary()
+  def checksum(data) when is_binary(data) do
+    :sha
+    |> :crypto.hash(data)
+    |> Base.encode16(case: :lower)
+    |> then(&("sha-" <> &1))
+  end
+end

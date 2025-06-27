@@ -1,6 +1,8 @@
 defmodule Nebulex.Adapters.DiskLFU.Options do
   @moduledoc false
 
+  alias Nebulex.Cache.Options, as: NbxOptions
+
   # Start options
   start_opts = [
     base_dir: [
@@ -33,14 +35,53 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
     ]
   ]
 
+  # Read options
+  read_opts = [
+    return: [
+      type: {:or, [{:in, [:binary, :metadata]}, {:fun, 1}]},
+      required: false,
+      default: :binary,
+      doc: """
+      The return value of the fetch operation.
+
+      The following values are supported:
+
+      - `:binary` - Returns the binary value.
+      - `:metadata` - Returns the metadata.
+      - `t:Nebulex.Adapters.DiskLFU.return_fn/0` - An anonymous function
+        that receives the binary value and the metadata in the shape of
+        `{binary, metadata}` and returns the desired value.
+
+      """
+    ]
+  ]
+
+  # Write options
+  write_opts = [
+    metadata: [
+      type: :map,
+      required: false,
+      default: %{},
+      doc: """
+      The metadata to store with the value.
+      """
+    ]
+  ]
+
   # Start options schema
   @start_opts_schema NimbleOptions.new!(start_opts)
 
   # Common runtime options schema
   @common_runtime_opts_schema NimbleOptions.new!(common_runtime_opts)
 
+  # Read options schema
+  @read_opts_schema NimbleOptions.new!(common_runtime_opts ++ read_opts)
+
+  # Write options schema
+  @write_opts_schema NimbleOptions.new!(common_runtime_opts ++ write_opts)
+
   # Nebulex common options
-  @nbx_start_opts Nebulex.Cache.Options.__compile_opts__() ++ Nebulex.Cache.Options.__start_opts__()
+  @nbx_start_opts NbxOptions.__compile_opts__() ++ NbxOptions.__start_opts__()
 
   ## Docs API
 
@@ -54,6 +95,20 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
   @spec common_runtime_options_docs() :: binary()
   def common_runtime_options_docs do
     NimbleOptions.docs(@common_runtime_opts_schema)
+  end
+
+  @spec read_options_docs() :: binary()
+  def read_options_docs do
+    @read_opts_schema.schema
+    |> Keyword.drop(Keyword.keys(@common_runtime_opts_schema.schema))
+    |> NimbleOptions.docs()
+  end
+
+  @spec write_options_docs() :: binary()
+  def write_options_docs do
+    @write_opts_schema.schema
+    |> Keyword.drop(Keyword.keys(@common_runtime_opts_schema.schema))
+    |> NimbleOptions.docs()
   end
 
   # coveralls-ignore-stop
@@ -74,8 +129,28 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
   def validate_common_runtime_opts!(opts) do
     adapter_opts =
       opts
-      |> Keyword.take([:retries, :modes])
+      |> Keyword.drop(NbxOptions.__runtime_shared_opts__())
       |> NimbleOptions.validate!(@common_runtime_opts_schema)
+
+    Keyword.merge(opts, adapter_opts)
+  end
+
+  @spec validate_read_opts!(keyword()) :: keyword()
+  def validate_read_opts!(opts) do
+    adapter_opts =
+      opts
+      |> Keyword.drop(NbxOptions.__runtime_shared_opts__())
+      |> NimbleOptions.validate!(@read_opts_schema)
+
+    Keyword.merge(opts, adapter_opts)
+  end
+
+  @spec validate_write_opts!(keyword()) :: keyword()
+  def validate_write_opts!(opts) do
+    adapter_opts =
+      opts
+      |> Keyword.drop(NbxOptions.__runtime_shared_opts__())
+      |> NimbleOptions.validate!(@write_opts_schema)
 
     Keyword.merge(opts, adapter_opts)
   end

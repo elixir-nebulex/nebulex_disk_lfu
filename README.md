@@ -6,7 +6,26 @@
 [![Hex Version](http://img.shields.io/hexpm/v/nebulex_disk_lfu.svg)](http://hex.pm/packages/nebulex_disk_lfu)
 [![Documentation](http://img.shields.io/badge/Documentation-ff69b4)](http://hexdocs.pm/nebulex_disk_lfu)
 
-_**Still under development!**_
+## About
+
+This adapter is ideally for those use cases when you want to use a disk-based
+cache storage to optimize expensive operations. For example, you have an
+application that downloads large files from S3 to process them, and those
+files are reusable. In such cases, it may be cheaper reading the file from
+the local file system (ideally using SSD) rather that reading it multiple
+times from S3.
+
+This adapter stores the cache in a directory on the file system. It uses the
+[LFU](https://en.wikipedia.org/wiki/Least_Frequently_Used) algorithm to
+evict the least frequently used items.
+
+---
+> [!NOTE]
+>
+> _**Still under development!**_
+>
+> `Nebulex.Adapters.DiskLFU` is only compatible with Nebulex v3.0.0 or later.
+---
 
 ## Installation
 
@@ -19,12 +38,6 @@ def deps do
   ]
 end
 ```
-
----
-> [!NOTE]
->
-> `Nebulex.Adapters.DiskLFU` is only compatible with Nebulex v3.0.0 or later.
----
 
 See the [online documentation](http://hexdocs.pm/nebulex_disk_lfu/)
 for more information.
@@ -85,4 +98,4 @@ all checks run successfully.
 
 Copyright (c) 2025, Carlos Bolaños.
 
-Nebulex.Adapters.DiskLFU source code is licensed under the [MIT License](LICENSE).
+`Nebulex.Adapters.DiskLFU` source code is licensed under the [MIT License](LICENSE).

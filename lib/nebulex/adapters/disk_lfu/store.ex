@@ -6,10 +6,42 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
   use GenServer
 
+  import Nebulex.Adapters.DiskLFU.Helpers
   import Nebulex.Time, only: [now: 0]
   import Nebulex.Utils, only: [camelize_and_concat: 1]
 
   alias Nebulex.Adapters.DiskLFU.Meta
+
+  ## Meta definition
+
+  require Record
+
+  # Record for the entry meta
+  Record.defrecord(:meta,
+    key: nil,
+    checksum: nil,
+    size_bytes: nil,
+    access_count: 0,
+    inserted_at: nil,
+    last_accessed_at: nil,
+    expires_at: :infinity,
+    metadata: %{}
+  )
+
+  @typedoc "Metadata for the entry in the cache."
+  @type meta() ::
+          record(:meta,
+            key: String.t(),
+            checksum: binary(),
+            size_bytes: non_neg_integer(),
+            access_count: non_neg_integer(),
+            inserted_at: non_neg_integer(),
+            last_accessed_at: non_neg_integer(),
+            expires_at: timeout(),
+            metadata: map()
+          )
+
+  ## Internals
 
   # Internal state
   defstruct cache_name: nil, cache_dir: nil, meta_table: nil
@@ -28,7 +60,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   Writes the given binary to disk.
   """
   @spec write_to_disk(atom(), String.t(), String.t(), binary(), keyword()) ::
-          {:ok, Meta.t()} | {:error, any()}
+          {:ok, meta()} | {:error, any()}
   def write_to_disk(meta_table, cache_dir, key, binary, opts \\ []) do
     # Build the base path
     {base_path, hash_key} = build_path(cache_dir, key)
@@ -40,14 +72,15 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     meta_final = base_path <> ".meta"
 
     # Write the binary to disk atomically
-    with_lock(base_path, Keyword.get(opts, :retries, :infinity), fn ->
+    with_lock(hash_key, Keyword.get(opts, :retries, :infinity), fn ->
       # Get the cache options
-      modes = Keyword.get(opts, :modes, [])
+      modes = Keyword.fetch!(opts, :modes)
       ttl = Keyword.fetch!(opts, :ttl)
+      metadata = Keyword.fetch!(opts, :metadata)
 
       # Build the metadata
-      meta = Meta.new(binary, base_path: base_path, expires_at: expires_at(ttl))
-      encoded_meta = Meta.encode(meta)
+      meta = new_meta(binary, key: hash_key, expires_at: expires_at(ttl), metadata: metadata)
+      encoded_meta = encode_meta(meta)
 
       # Write the binary to disk
       with :ok <- File.write(cache_tmp, binary, modes),
@@ -60,7 +93,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
            _ignore = update_stack(base_path, cache_final),
            :ok <- File.rename(meta_tmp, meta_final) do
         # Update the meta table
-        true = :ets.insert(meta_table, {hash_key, meta})
+        true = :ets.insert(meta_table, meta)
 
         {:ok, meta}
       else
@@ -76,27 +109,30 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @doc """
   Reads the binary from disk.
   """
-  @spec read_from_disk(atom(), String.t(), timeout()) ::
-          {:ok, {Meta.t(), binary()}} | {:error, any()}
-  def read_from_disk(meta_table, key, retries \\ :infinity) do
-    # Get the hash for the key
+  @spec read_from_disk(atom(), String.t(), String.t(), timeout()) ::
+          {:ok, {binary(), Meta.t()}} | {:error, any()}
+  def read_from_disk(meta_table, cache_dir, key, retries \\ :infinity) do
+    # Get the hash for the key and the path for the cache
     hash_key = hash_key(key)
+    path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} = meta ->
-      # Build the paths for the given key
-      meta_tmp = path <> ".meta.tmp"
-      meta_final = path <> ".meta"
+    # Read the binary from disk and update the metadata
+    # TODO: The metadata is persisted to disk asynchronously periodically
+    with_meta(meta_table, hash_key, path, retries, false, fn meta(access_count: count) = meta ->
+      with {:ok, binary} <- File.read(path <> ".cache") do
+        # Update the metadata
+        count = count + 1
+        now = now()
+        meta = new_meta(meta, access_count: count, last_accessed_at: now)
 
-      # Read the binary from disk and write the metadata to disk atomically
-      with {:ok, binary} <- File.read(path <> ".cache"),
-           meta = Meta.update_access_count(meta),
-           :ok <- File.write(meta_tmp, Meta.encode(meta)),
-           :ok = flush_to_disk(meta_tmp),
-           :ok <- File.rename(meta_tmp, meta_final) do
         # Update the meta table
-        true = :ets.insert(meta_table, {hash_key, meta})
+        _ignore =
+          :ets.update_element(meta_table, hash_key, [
+            {meta(:access_count) + 1, count},
+            {meta(:last_accessed_at), now}
+          ])
 
-        {:ok, {binary, meta}}
+        {:ok, {binary, export_meta(meta)}}
       end
     end)
   end
@@ -104,12 +140,13 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @doc """
   Deletes the binary from disk.
   """
-  @spec delete_from_disk(atom(), String.t(), timeout()) :: :ok | {:error, any()}
-  def delete_from_disk(meta_table, key, retries \\ :infinity) do
-    # Get the hash for the key
+  @spec delete_from_disk(atom(), String.t(), String.t(), timeout()) :: :ok | {:error, any()}
+  def delete_from_disk(meta_table, cache_dir, key, retries \\ :infinity) do
+    # Get the hash for the key and the path for the cache
     hash_key = hash_key(key)
+    path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} ->
+    with_meta(meta_table, hash_key, path, retries, fn meta(key: hash_key) ->
       safe_remove(meta_table, hash_key, path)
     end)
   end
@@ -117,16 +154,17 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @doc """
   Pops the binary from disk.
   """
-  @spec pop_from_disk(atom(), String.t(), timeout()) ::
-          {:ok, {Meta.t(), binary()}} | {:error, any()}
-  def pop_from_disk(meta_table, key, retries \\ :infinity) do
-    # Get the hash for the key
+  @spec pop_from_disk(atom(), String.t(), String.t(), timeout()) ::
+          {:ok, {binary(), Meta.t()}} | {:error, any()}
+  def pop_from_disk(meta_table, cache_dir, key, retries \\ :infinity) do
+    # Get the hash for the key and the path for the cache
     hash_key = hash_key(key)
+    path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} = meta ->
+    with_meta(meta_table, hash_key, path, retries, fn meta(key: hash_key) = meta ->
       with {:ok, binary} <- File.read(path <> ".cache"),
            :ok <- safe_remove(meta_table, hash_key, path) do
-        {:ok, {meta, binary}}
+        {:ok, {binary, export_meta(meta)}}
       end
     end)
   end
@@ -134,32 +172,39 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @doc """
   Fetches the meta for the given key.
   """
-  @spec fetch_meta(atom(), String.t(), timeout()) :: {:ok, Meta.t()} | {:error, :not_found}
-  def fetch_meta(meta_table, key, retries \\ :infinity) do
-    with_meta(meta_table, hash_key(key), retries, &{:ok, &1})
+  @spec fetch_meta(atom(), String.t(), String.t(), timeout()) ::
+          {:ok, Meta.t()} | {:error, :not_found}
+  def fetch_meta(meta_table, cache_dir, key, retries \\ :infinity) do
+    # Get the hash for the key and the path for the cache
+    hash_key = hash_key(key)
+    path = cache_path(cache_dir, hash_key)
+
+    with_meta(meta_table, hash_key, path, retries, &{:ok, export_meta(&1)})
   end
 
   @doc """
   Updates the meta for the given key.
   """
-  @spec update_meta(atom(), String.t(), timeout(), (Meta.t() -> Meta.t())) :: :ok | {:error, any()}
-  def update_meta(meta_table, key, retries \\ :infinity, fun) do
-    # Get the hash for the key
+  @spec update_meta(atom(), String.t(), String.t(), timeout(), (Meta.t() -> Meta.t())) ::
+          :ok | {:error, any()}
+  def update_meta(meta_table, cache_dir, key, retries \\ :infinity, fun) do
+    # Get the hash for the key and the path for the cache
     hash_key = hash_key(key)
+    path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, retries, fn %Meta{base_path: path} = meta ->
+    with_meta(meta_table, hash_key, path, retries, fn meta(key: hash_key) = meta ->
       # Build the metadata path
       meta_final = path <> ".meta"
 
       # Write the metadata to disk atomically
       with {:ok, _encoded_meta} <- File.read(meta_final),
-           meta = fun.(meta),
-           :ok <- File.write(meta_final, Meta.encode(meta)) do
+           meta = meta |> export_meta() |> fun.() |> import_meta(),
+           :ok <- File.write(meta_final, encode_meta(meta(meta, key: hash_key))) do
         # Flush the metadata to disk
         :ok = flush_to_disk(meta_final)
 
         # Update the meta table
-        true = :ets.insert(meta_table, {hash_key, meta})
+        true = :ets.insert(meta_table, meta)
 
         :ok
       end
@@ -235,40 +280,37 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       :set,
       :public,
       :named_table,
+      keypos: meta(:key) + 1,
       read_concurrency: true
     ])
   end
 
-  defp with_lock(key, retries, fun) do
-    with :aborted <- :global.trans({{__MODULE__, key}, self()}, fun, [node()], retries) do
-      {:error, :lock_timeout}
-    end
-  end
+  defp with_meta(meta_table, hash_key, path, retries, lock? \\ true, fun) do
+    now = now()
 
-  defp with_meta(meta_table, hash_key, retries, fun) do
     case :ets.lookup(meta_table, hash_key) do
-      [{^hash_key, %Meta{base_path: path} = meta}] ->
-        with_lock(path, retries, fn -> maybe_remove_expired(meta, meta_table, hash_key, fun) end)
+      [meta(key: ^hash_key, expires_at: expires_at)]
+      when is_integer(expires_at) and expires_at <= now ->
+        with_lock(hash_key, retries, fn ->
+          with :ok <- safe_remove(meta_table, hash_key, path) do
+            {:error, :expired}
+          end
+        end)
+
+      [meta(key: ^hash_key) = meta] when lock? == true ->
+        with_lock(hash_key, retries, fn -> fun.(meta) end)
+
+      [meta(key: ^hash_key) = meta] ->
+        fun.(meta)
 
       [] ->
         {:error, :not_found}
     end
   end
 
-  defp maybe_remove_expired(
-         %Meta{expires_at: expires_at, base_path: path} = meta,
-         meta_table,
-         hash_key,
-         fun
-       ) do
-    now = now()
-
-    if expires_at == :infinity or (is_integer(expires_at) and expires_at > now) do
-      fun.(meta)
-    else
-      with :ok <- safe_remove(meta_table, hash_key, path) do
-        {:error, :expired}
-      end
+  defp with_lock(key, retries, fun) do
+    with :aborted <- :global.trans({{__MODULE__, key}, self()}, fun, [node()], retries) do
+      {:error, :lock_timeout}
     end
   end
 
@@ -297,7 +339,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     |> Enum.reduce([], fn filename, acc ->
       case extract_meta_from_filename(filename) do
         {:ok, meta} ->
-          [{extract_key_from_filename(filename), meta} | acc]
+          [meta | acc]
 
         _error ->
           acc
@@ -318,29 +360,20 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     |> Enum.each(&File.rm/1)
   end
 
-  defp extract_key_from_filename(filename) do
-    Path.basename(filename, ".meta")
-  end
-
   defp extract_meta_from_filename(filename) do
     with {:ok, bin} <- File.read(filename) do
-      Meta.decode(bin)
+      decode_meta(bin)
     end
   end
 
   defp build_path(cache_dir, key) do
     hash_key = hash_key(key)
 
-    [cache_dir, hash_key]
-    |> Path.join()
-    |> Kernel.<>(Path.extname(key))
-    |> then(&{&1, hash_key})
+    {cache_path(cache_dir, hash_key), hash_key}
   end
 
-  defp hash_key(key) do
-    :sha256
-    |> :crypto.hash(key)
-    |> Base.encode16()
+  defp cache_path(cache_dir, hash_key) do
+    Path.join([cache_dir, hash_key])
   end
 
   defp flush_to_disk(path) do
@@ -376,4 +409,93 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
   #   cleanup_all(meta_table, cache_dir, :ets.next(meta_table, key))
   # end
+
+  ## Internal meta functions
+
+  defp new_meta(fields) do
+    new_meta(meta(), fields)
+  end
+
+  defp new_meta(meta() = meta, fields) when is_list(fields) or is_map(fields) do
+    Enum.reduce(fields, meta, fn
+      {:key, value}, meta -> meta(meta, key: value)
+      {:checksum, value}, meta -> meta(meta, checksum: value)
+      {:size_bytes, value}, meta -> meta(meta, size_bytes: value)
+      {:access_count, value}, meta -> meta(meta, access_count: value)
+      {:inserted_at, value}, meta -> meta(meta, inserted_at: value)
+      {:last_accessed_at, value}, meta -> meta(meta, last_accessed_at: value)
+      {:expires_at, value}, meta -> meta(meta, expires_at: value)
+      {:metadata, value}, meta -> meta(meta, metadata: value)
+    end)
+  end
+
+  defp new_meta(data, fields) when is_binary(data) and is_list(fields) do
+    now = now()
+
+    [
+      checksum: checksum(data),
+      size_bytes: byte_size(data),
+      inserted_at: now,
+      last_accessed_at: now
+    ]
+    |> Keyword.merge(fields)
+    |> new_meta()
+  end
+
+  defp encode_meta(meta() = meta) do
+    :erlang.term_to_binary(meta)
+  end
+
+  # sobelow_skip ["Misc.BinToTerm"]
+  defp decode_meta(binary) when is_binary(binary) do
+    case :erlang.binary_to_term(binary) do
+      meta() = meta ->
+        {:ok, meta}
+
+      _error ->
+        :error
+    end
+  end
+
+  defp export_meta(
+         meta(
+           checksum: checksum,
+           size_bytes: size_bytes,
+           access_count: access_count,
+           inserted_at: inserted_at,
+           last_accessed_at: last_accessed_at,
+           expires_at: expires_at,
+           metadata: metadata
+         )
+       ) do
+    %Meta{
+      checksum: checksum,
+      size_bytes: size_bytes,
+      access_count: access_count,
+      inserted_at: inserted_at,
+      last_accessed_at: last_accessed_at,
+      expires_at: expires_at,
+      metadata: metadata
+    }
+  end
+
+  defp import_meta(%Meta{
+         checksum: checksum,
+         size_bytes: size_bytes,
+         access_count: access_count,
+         inserted_at: inserted_at,
+         last_accessed_at: last_accessed_at,
+         expires_at: expires_at,
+         metadata: metadata
+       }) do
+    meta(
+      checksum: checksum,
+      size_bytes: size_bytes,
+      access_count: access_count,
+      inserted_at: inserted_at,
+      last_accessed_at: last_accessed_at,
+      expires_at: expires_at,
+      metadata: metadata
+    )
+  end
 end

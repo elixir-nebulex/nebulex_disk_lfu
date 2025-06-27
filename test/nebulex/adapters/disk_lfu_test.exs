@@ -46,6 +46,14 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("large_key") == {:ok, large_data}
     end
 
+    test "handles metadata", %{cache: cache} do
+      :ok = cache.put("key", "value", metadata: %{foo: "bar"})
+
+      assert cache.fetch("key") == {:ok, "value"}
+      assert cache.fetch("key", return: :metadata) == {:ok, %{foo: "bar"}}
+      assert cache.fetch("key", return: & &1) == {:ok, {"value", %{foo: "bar"}}}
+    end
+
     test "handles ttl", %{cache: cache} do
       :ok = cache.put("key", "value", ttl: 1)
 
@@ -66,8 +74,11 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
   describe "put" do
     test "puts a value in the cache", %{cache: cache} do
-      assert cache.put("key", "value", ttl: 1000) == :ok
+      assert cache.put("key", "value") == :ok
       assert cache.fetch("key") == {:ok, "value"}
+
+      assert cache.put("key", "value2", ttl: 1000) == :ok
+      assert cache.fetch("key") == {:ok, "value2"}
     end
 
     test "overwrites existing value", %{cache: cache} do
@@ -75,6 +86,13 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "new_value")
 
       assert cache.fetch("key") == {:ok, "new_value"}
+    end
+
+    test "puts a value in the cache with metadata", %{cache: cache} do
+      assert cache.put("key", "value", metadata: %{foo: "bar"}) == :ok
+      assert cache.fetch("key") == {:ok, "value"}
+
+      assert cache.fetch("key", return: :metadata) == {:ok, %{foo: "bar"}}
     end
 
     test "raises an error if the key is not a binary", %{cache: cache} do
@@ -187,6 +205,16 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       end
     end
 
+    test "handles metadata", %{cache: cache} do
+      :ok = cache.put("bin", "value", metadata: %{foo: "bar"})
+      :ok = cache.put("meta", "value", metadata: %{foo: "bar"})
+      :ok = cache.put("{bin, meta}", "value", metadata: %{foo: "bar"})
+
+      assert cache.take("bin") == {:ok, "value"}
+      assert cache.take("meta", return: :metadata) == {:ok, %{foo: "bar"}}
+      assert cache.take("{bin, meta}", return: & &1) == {:ok, {"value", %{foo: "bar"}}}
+    end
+
     test "returns error for non-existent key", %{cache: cache} do
       assert_raise Nebulex.KeyError, "key \"nonexistent\" not found", fn ->
         cache.take!("nonexistent")
@@ -240,7 +268,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = Process.sleep(100)
 
       Nebulex.Adapters.DiskLFU.Store
-      |> Mimic.expect(:fetch_meta, fn _, _, _ -> {:error, :enoent} end)
+      |> Mimic.expect(:fetch_meta, fn _, _, _, _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.has_key?("key")
     end

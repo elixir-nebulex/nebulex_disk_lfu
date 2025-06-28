@@ -5,6 +5,7 @@ defmodule Nebulex.Adapters.DiskLFU.Meta do
 
   @typedoc "Metadata structure for the cache."
   @type t() :: %__MODULE__{
+          key: String.t(),
           checksum: binary(),
           size_bytes: non_neg_integer(),
           access_count: non_neg_integer(),
@@ -14,8 +15,9 @@ defmodule Nebulex.Adapters.DiskLFU.Meta do
           metadata: map()
         }
 
-  @enforce_keys ~w(checksum size_bytes inserted_at last_accessed_at)a
-  defstruct checksum: nil,
+  @enforce_keys ~w(key checksum size_bytes inserted_at last_accessed_at)a
+  defstruct key: nil,
+            checksum: nil,
             size_bytes: nil,
             access_count: 0,
             inserted_at: nil,

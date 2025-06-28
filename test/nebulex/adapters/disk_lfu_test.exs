@@ -51,7 +51,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
       assert cache.fetch("key") == {:ok, "value"}
       assert cache.fetch("key", return: :metadata) == {:ok, %{foo: "bar"}}
-      assert cache.fetch("key", return: & &1) == {:ok, {"value", %{foo: "bar"}}}
+      assert cache.fetch("key", return: &{&1, &2}) == {:ok, {"value", %{foo: "bar"}}}
     end
 
     test "handles ttl", %{cache: cache} do
@@ -212,7 +212,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
       assert cache.take("bin") == {:ok, "value"}
       assert cache.take("meta", return: :metadata) == {:ok, %{foo: "bar"}}
-      assert cache.take("{bin, meta}", return: & &1) == {:ok, {"value", %{foo: "bar"}}}
+      assert cache.take("{bin, meta}", return: &{&1, &2}) == {:ok, {"value", %{foo: "bar"}}}
     end
 
     test "returns error for non-existent key", %{cache: cache} do
@@ -361,17 +361,61 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "incr" do
-    test "returns 1 for any counter update", %{cache: cache} do
-      assert cache.incr("counter", 5, default: 0) == {:ok, 1}
-      assert cache.incr("counter", 10, default: 0) == {:ok, 1}
+    test "raises an error", %{cache: cache} do
+      assert {:error, %Nebulex.Error{reason: :not_supported}} = cache.incr("key")
+    end
+  end
+
+  describe "count_all" do
+    test "counts all entries", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.count_all() == {:ok, 2}
+      assert cache.get!("key1") == "value1"
+      assert cache.get!("key2") == "value2"
+    end
+  end
+
+  describe "delete_all" do
+    test "deletes all entries", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.delete_all() == {:ok, 2}
+
+      assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.fetch("key1")
+      assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.fetch("key2")
+    end
+  end
+
+  describe "get_all" do
+    test "gets all keys", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.get_all!() |> Enum.sort() == ["key1", "key2"]
     end
 
-    test "works with negative amounts", %{cache: cache} do
-      assert cache.incr("counter", -5, default: 0) == {:ok, 1}
+    test "raises an error if the query is not supported", %{cache: cache} do
+      assert_raise ArgumentError, "`get_all` does not support query: {:q, \"invalid\"}", fn ->
+        cache.get_all(query: "invalid")
+      end
+    end
+  end
+
+  describe "stream" do
+    test "streams all keys", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.stream!() |> Enum.to_list() |> Enum.sort() == ["key1", "key2"]
     end
 
-    test "works with zero amount", %{cache: cache} do
-      assert cache.incr("counter", 0, default: 0) == {:ok, 1}
+    test "raises an error if the query is not supported", %{cache: cache} do
+      assert_raise ArgumentError, ~r"does not support query: {:q, \"invalid\"}", fn ->
+        cache.stream!(query: "invalid") |> Enum.to_list()
+      end
     end
   end
 

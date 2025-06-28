@@ -3,6 +3,7 @@
     "minimum_coverage": 100
   },
   "skip_files": [
+    "lib/nebulex/adapters/disk_lfu/meta.ex",
     "test/support/*"
   ]
 }

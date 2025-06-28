@@ -13,10 +13,6 @@ defmodule Nebulex.Adapters.DiskLFU do
   [LFU](https://en.wikipedia.org/wiki/Least_Frequently_Used) algorithm to
   evict the least frequently used items.
 
-  ## Performance
-
-  This adapter is designed to be fast and efficient. It uses the
-
   ## Options
 
   The adapter supports the following options:
@@ -48,15 +44,17 @@ defmodule Nebulex.Adapters.DiskLFU do
   # Provide Cache Implementation
   @behaviour Nebulex.Adapter
   @behaviour Nebulex.Adapter.KV
+  @behaviour Nebulex.Adapter.Queryable
 
   import Nebulex.Adapter
+  import Nebulex.Adapters.DiskLFU.Helpers
   import Nebulex.Time, only: [now: 0]
   import Nebulex.Utils
 
   alias __MODULE__.{Meta, Options, Store}
 
   @typedoc "The return function of the fetch operation."
-  @type return_fn() :: ({binary(), Meta.t()} -> any())
+  @type return_fn() :: (binary(), Meta.t() -> any())
 
   ## Nebulex.Adapter
 
@@ -231,7 +229,7 @@ defmodule Nebulex.Adapters.DiskLFU do
       cache_dir,
       key,
       retries,
-      &%{&1 | expires_at: Store.expires_at(ttl)}
+      &%{&1 | expires_at: expires_at(ttl)}
     )
     |> case do
       :ok -> {:ok, true}
@@ -256,7 +254,59 @@ defmodule Nebulex.Adapters.DiskLFU do
 
   @impl true
   def update_counter(_adapter_meta, _key, _amount, _default, _ttl, _opts) do
-    {:ok, 1}
+    # TODO: Maybe implement this in the future
+    wrap_error Nebulex.Error, reason: :not_supported
+  end
+
+  ## Nebulex.Adapter.Queryable
+
+  @impl true
+  def execute(adapter_meta, query_meta, opts)
+
+  def execute(
+        %{meta_tab: meta_tab},
+        %{op: :count_all, query: {:q, nil}},
+        _opts
+      ) do
+    {:ok, Store.count_all(meta_tab)}
+  end
+
+  def execute(
+        %{meta_tab: meta_tab, cache_dir: cache_dir},
+        %{op: :delete_all, query: {:q, nil}},
+        _opts
+      ) do
+    {:ok, Store.delete_all_from_disk(meta_tab, cache_dir)}
+  end
+
+  def execute(
+        %{meta_tab: meta_tab},
+        %{op: :get_all, query: {:q, nil}},
+        _opts
+      ) do
+    {:ok, Store.get_all_keys(meta_tab)}
+  end
+
+  def execute(_adapter_meta, %{op: op, query: query}, _opts) do
+    # TODO: Support more queries (e.g., `{:in, [...]}`, `{:q, match_spec}`)
+    raise ArgumentError, "`#{op}` does not support query: #{inspect(query)}"
+  end
+
+  @impl true
+  def stream(adapter_meta, query, opts) do
+    stream =
+      Stream.resource(
+        fn ->
+          execute(adapter_meta, %{query | op: :get_all}, opts)
+        end,
+        fn
+          {:ok, results} -> {results, :halt}
+          :halt -> {:halt, []}
+        end,
+        & &1
+      )
+
+    {:ok, stream}
   end
 
   ## Private functions
@@ -287,8 +337,8 @@ defmodule Nebulex.Adapters.DiskLFU do
     {:ok, meta}
   end
 
-  defp handle_return(fun, {binary, meta}) when is_function(fun, 1) do
-    {:ok, fun.({binary, meta})}
+  defp handle_return(fun, {binary, meta}) when is_function(fun, 2) do
+    {:ok, fun.(binary, meta)}
   end
 
   defp assert_binary(data, arg_name) do

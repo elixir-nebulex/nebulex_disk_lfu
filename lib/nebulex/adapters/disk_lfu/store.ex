@@ -1,8 +1,7 @@
 defmodule Nebulex.Adapters.DiskLFU.Store do
-  @moduledoc """
-  Handles atomic writing and reading of cache files and their metadata to disk,
-  including crash recovery, checksums, and lock-based fail-safety.
-  """
+  # Handles atomic writing and reading of cache files and their metadata to disk,
+  # including crash recovery, checksums, and lock-based fail-safety.
+  @moduledoc false
 
   use GenServer
 
@@ -19,6 +18,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   # Record for the entry meta
   Record.defrecord(:meta,
     key: nil,
+    raw_key: nil,
     checksum: nil,
     size_bytes: nil,
     access_count: 0,
@@ -32,6 +32,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @type meta() ::
           record(:meta,
             key: String.t(),
+            raw_key: String.t(),
             checksum: binary(),
             size_bytes: non_neg_integer(),
             access_count: non_neg_integer(),
@@ -74,18 +75,22 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     # Write the binary to disk atomically
     with_lock(hash_key, Keyword.get(opts, :retries, :infinity), fn ->
       # Get the cache options
-      modes = Keyword.fetch!(opts, :modes)
       ttl = Keyword.fetch!(opts, :ttl)
       metadata = Keyword.fetch!(opts, :metadata)
 
       # Build the metadata
-      meta = new_meta(binary, key: hash_key, expires_at: expires_at(ttl), metadata: metadata)
-      encoded_meta = encode_meta(meta)
+      meta =
+        new_meta(binary,
+          key: hash_key,
+          raw_key: key,
+          expires_at: expires_at(ttl),
+          metadata: metadata
+        )
 
       # Write the binary to disk
-      with :ok <- File.write(cache_tmp, binary, modes),
+      with :ok <- File.write(cache_tmp, binary, [:binary, :write]),
            _ignore = update_stack(base_path, cache_tmp),
-           :ok <- File.write(meta_tmp, encoded_meta),
+           :ok <- File.write(meta_tmp, encode_meta(meta)),
            _ignore = update_stack(base_path, meta_tmp),
            :ok = flush_to_disk(cache_tmp),
            :ok = flush_to_disk(meta_tmp),
@@ -146,7 +151,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     hash_key = hash_key(key)
     path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, path, retries, fn meta(key: hash_key) ->
+    with_meta(meta_table, hash_key, path, retries, fn meta(key: ^hash_key) ->
       safe_remove(meta_table, hash_key, path)
     end)
   end
@@ -161,7 +166,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     hash_key = hash_key(key)
     path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, path, retries, fn meta(key: hash_key) = meta ->
+    with_meta(meta_table, hash_key, path, retries, fn meta(key: ^hash_key) = meta ->
       with {:ok, binary} <- File.read(path <> ".cache"),
            :ok <- safe_remove(meta_table, hash_key, path) do
         {:ok, {binary, export_meta(meta)}}
@@ -192,7 +197,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     hash_key = hash_key(key)
     path = cache_path(cache_dir, hash_key)
 
-    with_meta(meta_table, hash_key, path, retries, fn meta(key: hash_key) = meta ->
+    with_meta(meta_table, hash_key, path, retries, fn meta(key: ^hash_key) = meta ->
       # Build the metadata path
       meta_final = path <> ".meta"
 
@@ -212,21 +217,50 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   @doc """
-  Calculates the expiration time for the given TTL.
+  Counts all the entries in the meta table.
   """
-  @spec expires_at(timeout()) :: timeout()
-  def expires_at(ttl)
+  @spec count_all(atom()) :: non_neg_integer()
+  def count_all(meta_table) do
+    # Get the count of all the entries in the meta table
+    :ets.info(meta_table, :size)
+  end
 
-  def expires_at(:infinity), do: :infinity
-  def expires_at(ttl), do: now() + ttl
+  @doc """
+  Deletes all the entries from disk.
+  """
+  @spec delete_all_from_disk(atom(), String.t()) :: non_neg_integer()
+  def delete_all_from_disk(meta_table, cache_dir) do
+    # Fix the meta table
+    _ignore = :ets.safe_fixtable(meta_table, true)
 
-  # @doc """
-  # Deletes all the entries from disk.
-  # """
-  # @spec delete_all_from_disk(atom() | pid()) :: :ok | {:error, any()}
-  # def delete_all_from_disk(server) do
-  #   GenServer.call(server, :delete_all)
-  # end
+    # Cleanup all the entries in the meta table
+    count = cleanup_all(meta_table, cache_dir, :ets.first(meta_table))
+
+    # Unfix the meta table
+    _ignore = :ets.safe_fixtable(meta_table, false)
+
+    count
+  end
+
+  @doc """
+  Gets all the keys from the meta table.
+  """
+  @spec get_all_keys(atom()) :: [String.t()]
+  def get_all_keys(meta_table) do
+    :ets.select(meta_table, [
+      {meta(
+         key: :"$1",
+         raw_key: :"$2",
+         checksum: :"$3",
+         size_bytes: :"$4",
+         access_count: :"$5",
+         inserted_at: :"$6",
+         last_accessed_at: :"$7",
+         expires_at: :"$8",
+         metadata: :"$9"
+       ), [], [:"$2"]}
+    ])
+  end
 
   ## GenServer callbacks
 
@@ -251,25 +285,6 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     # Return the state
     {:ok, state}
   end
-
-  # @impl true
-  # def handle_call(
-  #       :delete_all,
-  #       _from,
-  #       %__MODULE__{cache_dir: cache_dir, meta_table: meta_table} = state
-  #     ) do
-  #   # Fix the meta table
-  #   _ignore = :ets.safe_fixtable(meta_table, true)
-
-  #   # Cleanup all the entries in the meta table
-  #   :ok = cleanup_all(meta_table, cache_dir, :ets.first(meta_table))
-
-  #   # Unfix the meta table
-  #   _ignore = :ets.safe_fixtable(meta_table, false)
-
-  #   # Return the state
-  #   {:reply, :ok, state}
-  # end
 
   ## Private functions
 
@@ -400,15 +415,23 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     Process.delete({:lock, base_path})
   end
 
-  # defp cleanup_all(_meta_table, _cache_dir, :"$end_of_table") do
-  #   :ok
-  # end
+  defp cleanup_all(meta_table, cache_dir, hash_key) do
+    cleanup_all(meta_table, cache_dir, hash_key, 0)
+  end
 
-  # defp cleanup_all(meta_table, cache_dir, key) do
-  #   _ignore = delete_from_disk(meta_table, key)
+  defp cleanup_all(_meta_table, _cache_dir, :"$end_of_table", count) do
+    count
+  end
 
-  #   cleanup_all(meta_table, cache_dir, :ets.next(meta_table, key))
-  # end
+  defp cleanup_all(meta_table, cache_dir, hash_key, count) do
+    with_lock(hash_key, 10, fn ->
+      path = cache_path(cache_dir, hash_key)
+
+      safe_remove(meta_table, hash_key, path)
+    end)
+
+    cleanup_all(meta_table, cache_dir, :ets.next(meta_table, hash_key), count + 1)
+  end
 
   ## Internal meta functions
 
@@ -419,6 +442,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   defp new_meta(meta() = meta, fields) when is_list(fields) or is_map(fields) do
     Enum.reduce(fields, meta, fn
       {:key, value}, meta -> meta(meta, key: value)
+      {:raw_key, value}, meta -> meta(meta, raw_key: value)
       {:checksum, value}, meta -> meta(meta, checksum: value)
       {:size_bytes, value}, meta -> meta(meta, size_bytes: value)
       {:access_count, value}, meta -> meta(meta, access_count: value)
@@ -459,6 +483,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
   defp export_meta(
          meta(
+           raw_key: raw_key,
            checksum: checksum,
            size_bytes: size_bytes,
            access_count: access_count,
@@ -469,6 +494,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
          )
        ) do
     %Meta{
+      key: raw_key,
       checksum: checksum,
       size_bytes: size_bytes,
       access_count: access_count,
@@ -480,6 +506,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   defp import_meta(%Meta{
+         key: key,
          checksum: checksum,
          size_bytes: size_bytes,
          access_count: access_count,
@@ -489,6 +516,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
          metadata: metadata
        }) do
     meta(
+      raw_key: key,
       checksum: checksum,
       size_bytes: size_bytes,
       access_count: access_count,

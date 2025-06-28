@@ -24,21 +24,13 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       doc: """
       The number of times to retry a command if it fails because of a lock.
       """
-    ],
-    modes: [
-      type: {:list, :atom},
-      required: false,
-      default: [],
-      doc: """
-      The modes to write the binary to disk.
-      """
     ]
   ]
 
   # Read options
   read_opts = [
     return: [
-      type: {:or, [{:in, [:binary, :metadata]}, {:fun, 1}]},
+      type: {:or, [{:in, [:binary, :metadata]}, {:fun, 2}]},
       required: false,
       default: :binary,
       doc: """
@@ -49,8 +41,8 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       - `:binary` - Returns the binary value.
       - `:metadata` - Returns the metadata.
       - `t:Nebulex.Adapters.DiskLFU.return_fn/0` - An anonymous function
-        that receives the binary value and the metadata in the shape of
-        `{binary, metadata}` and returns the desired value.
+        that receives the binary value and the metadata and returns the
+        desired value.
 
       """
     ]

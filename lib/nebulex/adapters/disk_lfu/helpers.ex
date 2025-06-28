@@ -3,6 +3,8 @@ defmodule Nebulex.Adapters.DiskLFU.Helpers do
   Helper functions for the disk LFU adapter.
   """
 
+  import Nebulex.Time, only: [now: 0]
+
   ## API
 
   @doc """
@@ -25,4 +27,13 @@ defmodule Nebulex.Adapters.DiskLFU.Helpers do
     |> Base.encode16(case: :lower)
     |> then(&("sha-" <> &1))
   end
+
+  @doc """
+  Calculates the expiration time for the given TTL.
+  """
+  @spec expires_at(timeout()) :: timeout()
+  def expires_at(ttl)
+
+  def expires_at(:infinity), do: :infinity
+  def expires_at(ttl), do: now() + ttl
 end

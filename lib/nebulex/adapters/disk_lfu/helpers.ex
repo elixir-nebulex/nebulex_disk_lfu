@@ -32,8 +32,21 @@ defmodule Nebulex.Adapters.DiskLFU.Helpers do
   Calculates the expiration time for the given TTL.
   """
   @spec expires_at(timeout()) :: timeout()
-  def expires_at(ttl)
+  def expires_at(ttl) do
+    case ttl do
+      :infinity -> :infinity
+      ttl -> now() + ttl
+    end
+  end
 
-  def expires_at(:infinity), do: :infinity
-  def expires_at(ttl), do: now() + ttl
+  @doc """
+  Calculates the remaining TTL for the given expiration time.
+  """
+  @spec remaining_ttl(timeout()) :: timeout()
+  def remaining_ttl(expires_at) do
+    case expires_at do
+      :infinity -> :infinity
+      expires_at -> expires_at - now()
+    end
+  end
 end

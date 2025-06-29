@@ -12,7 +12,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
   setup do
     dir = Briefly.create!(type: :directory)
-    {:ok, pid} = DiskCache.start_link(base_dir: dir)
+    {:ok, pid} = DiskCache.start_link(root_path: dir)
 
     on_exit(fn -> safe_stop(pid) end)
 
@@ -268,7 +268,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = Process.sleep(100)
 
       Nebulex.Adapters.DiskLFU.Store
-      |> Mimic.expect(:fetch_meta, fn _, _, _, _ -> {:error, :enoent} end)
+      |> Mimic.expect(:fetch_meta, fn _, _, _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.has_key?("key")
     end
@@ -459,13 +459,13 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("another_key", "another_value")
 
       # Simulate a corrupted meta file
-      :ok = File.write!(cache.cache_dir() <> "/error_key.meta", :erlang.term_to_binary("meta"))
+      :ok = File.write!(cache.cache_path() <> "/error_key.meta", :erlang.term_to_binary("meta"))
 
       # Stop the cache
       safe_stop(pid)
 
       # Restart the cache with the same directory
-      {:ok, _pid} = DiskCache.start_link(base_dir: dir)
+      {:ok, _pid} = DiskCache.start_link(root_path: dir)
 
       # Verify data is still there
       assert cache.fetch("persistent_key") == {:ok, "persistent_value"}

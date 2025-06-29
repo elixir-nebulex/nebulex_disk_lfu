@@ -8,16 +8,19 @@
 
 ## About
 
-This adapter is ideally for those use cases when you want to use a disk-based
-cache storage to optimize expensive operations. For example, you have an
-application that downloads large files from S3 to process them, and those
-files are reusable. In such cases, it may be cheaper reading the file from
-the local file system (ideally using SSD) rather that reading it multiple
-times from S3.
+`Nebulex.Adapters.DiskLFU` is a
+**persistent LFU (Least Frequently Used) cache adapter**
+for [Nebulex](https://hexdocs.pm/nebulex), designed to provide an SSD-backed
+cache with disk persistence, TTL support, and LFU-based eviction.
+This adapter is ideal for workloads that require:
 
-This adapter stores the cache in a directory on the file system. It uses the
-[LFU](https://en.wikipedia.org/wiki/Least_Frequently_Used) algorithm to
-evict the least frequently used items.
+- High-capacity caching without exhausting memory.
+- File-based persistence with cache recovery after restarts.
+- Concurrency-safe operations for both reads and writes.
+- Customizable eviction strategies.
+
+See the [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)
+document for more information.
 
 ---
 > [!NOTE]
@@ -59,7 +62,7 @@ environment, usually defined in your `config/config.exs`:
 
 ```elixir
 config :my_app, MyApp.Cache,
-  base_dir: "/var/cache",
+  root_path: "/var/cache",
   ...
 ```
 

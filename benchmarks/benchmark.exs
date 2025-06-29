@@ -23,7 +23,7 @@ benchmarks = %{
 
 # Start cache
 dir = Briefly.create!(type: :directory)
-{:ok, pid} = Cache.start_link(base_dir: dir)
+{:ok, pid} = Cache.start_link(root_path: dir)
 
 Cache.put_all([{"fetch", binary}, {"delete", binary}])
 

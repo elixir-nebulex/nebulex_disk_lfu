@@ -31,11 +31,8 @@ defmodule NebulexDiskLFU.MixProject do
       description: "A Nebulex adapter for DiskLFU",
 
       # Docs
-      docs: [
-        main: "Nebulex.Adapters.DiskLFU",
-        source_ref: "v#{@version}",
-        source_url: @source_url
-      ]
+      name: "Nebulex.Adapters.DiskLFU",
+      docs: docs()
     ]
   end
 
@@ -85,6 +82,24 @@ defmodule NebulexDiskLFU.MixProject do
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
       files: ~w(lib .formatter.exs mix.exs README* CHANGELOG* LICENSE*)
+    ]
+  end
+
+  defp docs do
+    [
+      main: "Nebulex.Adapters.DiskLFU",
+      source_ref: "v#{@version}",
+      canonical: "http://hexdocs.pm/nebulex_disk_lfu",
+      source_url: @source_url,
+      extra_section: "GUIDES",
+      extras: extras()
+    ]
+  end
+
+  defp extras do
+    [
+      # Learning
+      "guides/learning/architecture.md"
     ]
   end
 

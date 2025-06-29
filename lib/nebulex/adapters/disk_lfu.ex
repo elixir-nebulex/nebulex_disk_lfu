@@ -1,17 +1,26 @@
 defmodule Nebulex.Adapters.DiskLFU do
   @moduledoc """
-  A Nebulex adapter for a disk-based LFU cache.
+  `Nebulex.Adapters.DiskLFU` is a
+  **persistent LFU (Least Frequently Used) cache adapter** for
+  [Nebulex](https://hexdocs.pm/nebulex), designed to provide an SSD-backed
+  cache with disk persistence, TTL support, and LFU-based eviction.
+  his adapter is ideal for workloads that require:
 
-  This adapter is ideally for those use cases when you want to use a disk-based
-  cache storage to optimize expensive operations. For example, you have an
-  application that downloads large files from S3 to process them, and those
-  files are reusable. In such cases, it may be cheaper reading the file from
-  the local file system (ideally using SSD) rather that reading it multiple
-  times from S3.
+  - High-capacity caching without exhausting memory.
+  - File-based persistence with cache recovery after restarts.
+  - Concurrency-safe operations for both reads and writes.
+  - Customizable eviction strategies.
 
-  This adapter stores the cache in a directory on the file system. It uses the
-  [LFU](https://en.wikipedia.org/wiki/Least_Frequently_Used) algorithm to
-  evict the least frequently used items.
+  For example, imagine an application that downloads large files from S3 to
+  process them. These files are reusable across different operations or
+  requests. In such cases, it can be significantly more efficient to cache the
+  files locally—ideally on an SSD—rather than repeatedly fetching them from S3.
+  Using `Nebulex.Adapters.DiskLFU`, these files can be stored and accessed from
+  the local file system with LFU eviction and TTL handling, reducing latency
+  and cloud egress costs.
+
+  See the [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)
+  document for more information.
 
   ## Options
 
@@ -64,11 +73,11 @@ defmodule Nebulex.Adapters.DiskLFU do
       @doc """
       Returns the cache directory for the given cache name.
       """
-      @spec cache_dir(atom()) :: String.t()
-      def cache_dir(name \\ __MODULE__) do
+      @spec cache_path(atom()) :: String.t()
+      def cache_path(name \\ __MODULE__) do
         name
         |> lookup_meta()
-        |> Map.fetch!(:cache_dir)
+        |> Map.fetch!(:cache_path)
       end
     end
   end
@@ -82,22 +91,26 @@ defmodule Nebulex.Adapters.DiskLFU do
     opts = Options.validate_start_opts!(opts)
 
     # Get the required options
-    {base_dir, opts} = Keyword.pop!(opts, :base_dir)
+    {root_path, opts} = Keyword.pop!(opts, :root_path)
     name = opts[:name] || cache
-    cache_dir = Path.join(base_dir, to_string(name))
+    cache_path = Path.join(root_path, to_string(name))
 
     # Create the adapter meta
     adapter_meta = %{
       name: name,
-      base_dir: base_dir,
-      cache_dir: cache_dir,
-      meta_tab: camelize_and_concat([name, "Meta"])
+      root_path: root_path,
+      cache_path: cache_path,
+      meta_table: camelize_and_concat([name, "Meta"]),
+      bytes_counter: :counters.new(1, [:write_concurrency]),
+      max_bytes: Keyword.fetch!(opts, :max_bytes),
+      eviction_select_limit: Keyword.fetch!(opts, :eviction_select_limit),
+      eviction_victims_limit: Keyword.fetch!(opts, :eviction_victims_limit)
     }
 
     # Create the child spec for the store
     child_spec =
       Supervisor.child_spec(
-        {Store, cache_name: name, cache_dir: cache_dir},
+        {Store, cache_name: name, cache_path: cache_path},
         id: {__MODULE__, camelize_and_concat([name, Store])}
       )
 
@@ -107,7 +120,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   ## Nebulex.Adapter.KV
 
   @impl true
-  def fetch(%{cache_dir: cache_dir, meta_tab: meta_tab}, key, opts) do
+  def fetch(adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_read_opts!(opts)
@@ -115,36 +128,34 @@ defmodule Nebulex.Adapters.DiskLFU do
     return = Keyword.fetch!(opts, :return)
 
     with {:ok, {binary, %Meta{metadata: meta}}} <-
-           Store.read_from_disk(meta_tab, cache_dir, key, retries) do
+           Store.read_from_disk(adapter_meta, key, retries) do
       handle_return(return, {binary, meta})
     end
     |> handle_result(key)
   end
 
   @impl true
-  def put(
-        %{meta_tab: meta_tab, cache_dir: cache_dir},
-        key,
-        value,
-        _on_write,
-        ttl,
-        _keep_ttl?,
-        opts
-      ) do
+  def put(adapter_meta, key, value, _on_write, ttl, _keep_ttl?, opts) do
     assert_binary(key, "key")
     assert_binary(value, "value")
 
-    opts = Options.validate_write_opts!(opts)
+    opts =
+      opts
+      |> Options.validate_write_opts!()
+      |> Keyword.put(:ttl, ttl)
 
-    with {:ok, _} <- Store.write_to_disk(meta_tab, cache_dir, key, value, [ttl: ttl] ++ opts) do
+    with {:ok, _} <- Store.write_to_disk(adapter_meta, key, value, opts) do
       :ok
     end
     |> handle_result()
   end
 
   @impl true
-  def put_all(%{meta_tab: meta_tab, cache_dir: cache_dir}, entries, _on_write, ttl, opts) do
-    opts = Options.validate_write_opts!(opts)
+  def put_all(adapter_meta, entries, _on_write, ttl, opts) do
+    opts =
+      opts
+      |> Options.validate_write_opts!()
+      |> Keyword.put(:ttl, ttl)
 
     entries
     |> Stream.map(fn {key, value} ->
@@ -154,7 +165,7 @@ defmodule Nebulex.Adapters.DiskLFU do
       {key, value}
     end)
     |> Enum.reduce_while(:ok, fn {key, value}, acc ->
-      case Store.write_to_disk(meta_tab, cache_dir, key, value, [ttl: ttl] ++ opts) do
+      case Store.write_to_disk(adapter_meta, key, value, opts) do
         {:ok, _} -> {:cont, acc}
         {:error, _} = error -> {:halt, error}
       end
@@ -163,19 +174,19 @@ defmodule Nebulex.Adapters.DiskLFU do
   end
 
   @impl true
-  def delete(%{meta_tab: meta_tab, cache_dir: cache_dir}, key, opts) do
+  def delete(adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_common_runtime_opts!(opts)
     retries = Keyword.fetch!(opts, :retries)
 
-    meta_tab
-    |> Store.delete_from_disk(cache_dir, key, retries)
+    adapter_meta
+    |> Store.delete_from_disk(key, retries)
     |> handle_result(key)
   end
 
   @impl true
-  def take(%{meta_tab: meta_tab, cache_dir: cache_dir}, key, opts) do
+  def take(adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_read_opts!(opts)
@@ -183,20 +194,20 @@ defmodule Nebulex.Adapters.DiskLFU do
     return = Keyword.fetch!(opts, :return)
 
     with {:ok, {binary, %Meta{metadata: meta}}} <-
-           Store.pop_from_disk(meta_tab, cache_dir, key, retries) do
+           Store.pop_from_disk(adapter_meta, key, retries) do
       handle_return(return, {binary, meta})
     end
     |> handle_result(key)
   end
 
   @impl true
-  def has_key?(%{meta_tab: meta_tab, cache_dir: cache_dir}, key, opts) do
+  def has_key?(adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_common_runtime_opts!(opts)
     retries = Keyword.fetch!(opts, :retries)
 
-    case Store.fetch_meta(meta_tab, cache_dir, key, retries) do
+    case Store.fetch_meta(adapter_meta, key, retries) do
       {:ok, _} -> {:ok, true}
       {:error, reason} when reason in [:not_found, :expired] -> {:ok, false}
       {:error, _} = error -> handle_result(error)
@@ -204,52 +215,44 @@ defmodule Nebulex.Adapters.DiskLFU do
   end
 
   @impl true
-  def ttl(%{meta_tab: meta_tab, cache_dir: cache_dir}, key, opts) do
+  def ttl(adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_common_runtime_opts!(opts)
     retries = Keyword.fetch!(opts, :retries)
 
-    with {:ok, %Meta{expires_at: expires_at}} <-
-           Store.fetch_meta(meta_tab, cache_dir, key, retries) do
+    with {:ok, %Meta{expires_at: expires_at}} <- Store.fetch_meta(adapter_meta, key, retries) do
       {:ok, remaining_ttl(expires_at)}
     end
     |> handle_result(key)
   end
 
   @impl true
-  def expire(%{meta_tab: meta_tab, cache_dir: cache_dir}, key, ttl, opts) do
+  def expire(adapter_meta, key, ttl, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_common_runtime_opts!(opts)
     retries = Keyword.fetch!(opts, :retries)
 
     Store.update_meta(
-      meta_tab,
-      cache_dir,
+      adapter_meta,
       key,
       retries,
       &%{&1 | expires_at: expires_at(ttl)}
     )
-    |> case do
-      :ok -> {:ok, true}
-      {:error, :not_found} -> {:ok, false}
-      {:error, _} = error -> handle_result(error)
-    end
+    |> handle_update_meta()
   end
 
   @impl true
-  def touch(%{meta_tab: meta_tab, cache_dir: cache_dir}, key, opts) do
+  def touch(adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_common_runtime_opts!(opts)
     retries = Keyword.fetch!(opts, :retries)
 
-    case Store.update_meta(meta_tab, cache_dir, key, retries, &%{&1 | last_accessed_at: now()}) do
-      :ok -> {:ok, true}
-      {:error, :not_found} -> {:ok, false}
-      {:error, _} = error -> handle_result(error)
-    end
+    adapter_meta
+    |> Store.update_meta(key, retries, &%{&1 | last_accessed_at: now()})
+    |> handle_update_meta()
   end
 
   @impl true
@@ -264,31 +267,32 @@ defmodule Nebulex.Adapters.DiskLFU do
   def execute(adapter_meta, query_meta, opts)
 
   def execute(
-        %{meta_tab: meta_tab},
+        %{meta_table: meta_table},
         %{op: :count_all, query: {:q, nil}},
         _opts
       ) do
-    {:ok, Store.count_all(meta_tab)}
+    {:ok, Store.count_all(meta_table)}
   end
 
   def execute(
-        %{meta_tab: meta_tab, cache_dir: cache_dir},
+        %{meta_table: meta_table, cache_path: cache_path},
         %{op: :delete_all, query: {:q, nil}},
         _opts
       ) do
-    {:ok, Store.delete_all_from_disk(meta_tab, cache_dir)}
+    {:ok, Store.delete_all_from_disk(meta_table, cache_path)}
   end
 
   def execute(
-        %{meta_tab: meta_tab},
+        %{meta_table: meta_table},
         %{op: :get_all, query: {:q, nil}},
         _opts
       ) do
-    {:ok, Store.get_all_keys(meta_tab)}
+    {:ok, Store.get_all_keys(meta_table)}
   end
 
   def execute(_adapter_meta, %{op: op, query: query}, _opts) do
-    # TODO: Support more queries (e.g., `{:in, [...]}`, `{:q, match_spec}`)
+    # TODO: Support more queries in the future
+    # E.g., `{:in, [...]}`, `{:q, match_spec}`, etc.
     raise ArgumentError, "`#{op}` does not support query: #{inspect(query)}"
   end
 
@@ -341,12 +345,17 @@ defmodule Nebulex.Adapters.DiskLFU do
     {:ok, fun.(binary, meta)}
   end
 
+  defp handle_update_meta(result) do
+    case result do
+      :ok -> {:ok, true}
+      {:error, :not_found} -> {:ok, false}
+      {:error, _} = error -> handle_result(error)
+    end
+  end
+
   defp assert_binary(data, arg_name) do
     unless is_binary(data) do
       raise ArgumentError, "the #{arg_name} must be a binary, got: #{inspect(data)}"
     end
   end
-
-  defp remaining_ttl(:infinity), do: :infinity
-  defp remaining_ttl(expires_at), do: expires_at - now()
 end

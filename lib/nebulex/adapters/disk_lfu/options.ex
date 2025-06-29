@@ -5,12 +5,39 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
 
   # Start options
   start_opts = [
-    base_dir: [
+    root_path: [
       type: :string,
       required: false,
       default: "cache",
       doc: """
-      The base directory to store the cache files.
+      The root path to store the cache files.
+      """
+    ],
+    max_bytes: [
+      type: {:or, [:pos_integer, nil]},
+      required: false,
+      default: nil,
+      doc: """
+      The maximum number of bytes to store in the cache.
+
+      If not provided, the cache will not evict entries based on the total
+      size of the cache (default).
+      """
+    ],
+    eviction_select_limit: [
+      type: :pos_integer,
+      required: false,
+      default: 1000,
+      doc: """
+      The maximum number of eviction victims to select.
+      """
+    ],
+    eviction_victims_limit: [
+      type: :pos_integer,
+      required: false,
+      default: 100,
+      doc: """
+      The maximum number of eviction victims to delete.
       """
     ]
   ]

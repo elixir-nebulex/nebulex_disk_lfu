@@ -1,0 +1,141 @@
+defmodule Nebulex.Adapters.DiskLFUEvictionTest do
+  use ExUnit.Case, async: true
+  use Mimic
+
+  import Nebulex.Adapters.DiskLFU.TestUtils
+
+  alias Nebulex.Adapter
+
+  defmodule DiskCache do
+    use Nebulex.Cache,
+      otp_app: :nebulex_disk_lfu,
+      adapter: Nebulex.Adapters.DiskLFU
+  end
+
+  setup do
+    dir = Briefly.create!(type: :directory)
+
+    {:ok, cache: DiskCache, dir: dir}
+  end
+
+  describe "eviction" do
+    setup %{dir: dir} do
+      {:ok, pid} =
+        DiskCache.start_link(
+          root_path: dir,
+          max_bytes: 20,
+          eviction_victims_limit: 2
+        )
+
+      on_exit(fn -> safe_stop(pid) end)
+
+      {:ok, pid: pid}
+    end
+
+    test "data is evicted when the max bytes is reached", %{cache: cache} do
+      :ok = cache.put("key1", "12345")
+      :ok = cache.put("key2", "12345", ttl: 10)
+      :ok = cache.put("key3", "12345", ttl: 50)
+      :ok = cache.put("key4", "12345", ttl: 100)
+
+      # Should increment the access count
+      assert cache.get!("key1") == "12345"
+
+      :ok = Process.sleep(20)
+
+      # This should evict: key2, key3, key4
+      :ok = cache.put("key5", "1234567890", ttl: 100)
+
+      assert cache.get!("key1") == "12345"
+      refute cache.get!("key2")
+      refute cache.get!("key3")
+      refute cache.get!("key4")
+      assert cache.get!("key5") == "1234567890"
+    end
+
+    test "bytes count is updated", %{cache: cache} do
+      Enum.each(1..4, &cache.put("key#{&1}", "12345"))
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+
+      # This should evict 2 keys
+      :ok = cache.put("key5", "1234567890")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+
+      # This should delete the key5
+      :ok = cache.delete("key5")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 10
+
+      # This should not evict any key
+      :ok = cache.put("key6", "12345")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 15
+
+      # This should delete the key6
+      assert cache.take!("key6") == "12345"
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 10
+    end
+
+    test "multiple writes to the same key", %{cache: cache} do
+      :ok = cache.put("key0", "12345")
+      :ok = cache.put("key1", "12345")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 10
+
+      :ok = cache.put("key1", "1234567890")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 15
+
+      :ok = cache.put("key1", "123456789012345")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+
+      :ok = cache.put("key1", "12345")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 10
+    end
+  end
+
+  describe "corner case" do
+    setup %{dir: dir} do
+      {:ok, pid} =
+        DiskCache.start_link(
+          root_path: dir,
+          max_bytes: 20,
+          eviction_victims_limit: 2
+        )
+
+      on_exit(fn -> safe_stop(pid) end)
+
+      {:ok, pid: pid}
+    end
+
+    test "the initial write size exceeds the max bytes", %{cache: cache} do
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 0
+
+      assert {:error, %Nebulex.Error{reason: :max_bytes_exceeded}} =
+               cache.put("key1", String.duplicate("12345", 5))
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 0
+    end
+
+    test "the next write size exceeds the max bytes", %{cache: cache} do
+      str = String.duplicate("12345", 4)
+      :ok = cache.put("key1", str)
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+
+      assert {:error, %Nebulex.Error{reason: :max_bytes_exceeded}} =
+               cache.put("key2", str <> "1")
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+
+      :ok = cache.put("key1", str)
+
+      assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+    end
+  end
+end

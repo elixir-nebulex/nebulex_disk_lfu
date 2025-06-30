@@ -261,6 +261,37 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   @doc """
+  Pops the meta for the given key.
+  """
+  @spec pop_meta(adapter_meta(), String.t(), timeout()) ::
+          {:ok, Meta.t()} | {:error, any()}
+  def pop_meta(
+        %{meta_table: meta_table, cache_path: cache_path, bytes_counter: counter_ref},
+        key,
+        retries
+      ) do
+    # Get the hash for the key and the path for the cache
+    hash_key = hash_key(key)
+    path = cache_key_path(cache_path, hash_key)
+
+    with_meta(
+      meta_table,
+      counter_ref,
+      hash_key,
+      path,
+      retries,
+      fn meta(size_bytes: bin_size) = meta ->
+        with :ok <- safe_remove(meta_table, hash_key, path) do
+          # Update the max bytes counter
+          :ok = :counters.sub(counter_ref, 1, bin_size)
+
+          {:ok, export_meta(meta)}
+        end
+      end
+    )
+  end
+
+  @doc """
   Updates the meta for the given key.
   """
   @spec update_meta(adapter_meta(), String.t(), timeout(), (Meta.t() -> Meta.t())) ::

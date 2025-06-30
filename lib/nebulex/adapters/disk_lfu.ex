@@ -128,9 +128,15 @@ defmodule Nebulex.Adapters.DiskLFU do
     retries = Keyword.fetch!(opts, :retries)
     return = Keyword.fetch!(opts, :return)
 
-    with {:ok, {binary, %Meta{metadata: meta}}} <-
-           Store.read_from_disk(adapter_meta, key, retries) do
-      handle_return(return, {binary, meta})
+    result =
+      if return == :metadata do
+        Store.fetch_meta(adapter_meta, key, retries)
+      else
+        Store.read_from_disk(adapter_meta, key, retries)
+      end
+
+    with {:ok, _} = ok <- result do
+      handle_return(return, ok)
     end
     |> handle_result(key)
   end
@@ -194,9 +200,15 @@ defmodule Nebulex.Adapters.DiskLFU do
     retries = Keyword.fetch!(opts, :retries)
     return = Keyword.fetch!(opts, :return)
 
-    with {:ok, {binary, %Meta{metadata: meta}}} <-
-           Store.pop_from_disk(adapter_meta, key, retries) do
-      handle_return(return, {binary, meta})
+    result =
+      if return == :metadata do
+        Store.pop_meta(adapter_meta, key, retries)
+      else
+        Store.pop_from_disk(adapter_meta, key, retries)
+      end
+
+    with {:ok, _} = ok <- result do
+      handle_return(return, ok)
     end
     |> handle_result(key)
   end
@@ -334,15 +346,15 @@ defmodule Nebulex.Adapters.DiskLFU do
     other
   end
 
-  defp handle_return(:binary, {binary, _meta}) do
-    {:ok, binary}
-  end
-
-  defp handle_return(:metadata, {_binary, meta}) do
+  defp handle_return(:metadata, {:ok, %Meta{metadata: meta}}) do
     {:ok, meta}
   end
 
-  defp handle_return(fun, {binary, meta}) when is_function(fun, 2) do
+  defp handle_return(:binary, {:ok, {binary, _meta}}) do
+    {:ok, binary}
+  end
+
+  defp handle_return(fun, {:ok, {binary, %Meta{metadata: meta}}}) when is_function(fun, 2) do
     {:ok, fun.(binary, meta)}
   end
 

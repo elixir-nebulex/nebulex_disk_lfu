@@ -103,14 +103,15 @@ defmodule Nebulex.Adapters.DiskLFU do
       meta_table: camelize_and_concat([name, "Meta"]),
       bytes_counter: :counters.new(1, [:write_concurrency]),
       max_bytes: Keyword.fetch!(opts, :max_bytes),
-      eviction_select_limit: Keyword.fetch!(opts, :eviction_select_limit),
-      eviction_victims_limit: Keyword.fetch!(opts, :eviction_victims_limit)
+      eviction_victim_sample_size: Keyword.fetch!(opts, :eviction_victim_sample_size),
+      eviction_victim_limit: Keyword.fetch!(opts, :eviction_victim_limit),
+      metadata_persistence_timeout: Keyword.fetch!(opts, :metadata_persistence_timeout)
     }
 
     # Create the child spec for the store
     child_spec =
       Supervisor.child_spec(
-        {Store, cache_name: name, cache_path: cache_path},
+        {Store, adapter_meta},
         id: {__MODULE__, camelize_and_concat([name, Store])}
       )
 

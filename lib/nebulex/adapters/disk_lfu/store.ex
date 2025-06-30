@@ -51,16 +51,23 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   ## Internals
 
   # Internal state
-  defstruct cache_name: nil, cache_path: nil, meta_table: nil
+  defstruct cache_name: nil,
+            cache_path: nil,
+            meta_table: nil,
+            meta_sync_timeout: nil,
+            meta_sync_timer_ref: nil
+
+  # Default lock retries
+  @default_lock_retries 10
 
   ## API
 
   @doc """
   Starts the store server.
   """
-  @spec start_link(keyword()) :: GenServer.on_start()
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts)
+  @spec start_link(adapter_meta()) :: GenServer.on_start()
+  def start_link(adapter_meta) do
+    GenServer.start_link(__MODULE__, adapter_meta)
   end
 
   @doc """
@@ -270,12 +277,15 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
     with_meta(meta_table, counter_ref, hash_key, path, retries, fn meta(key: ^hash_key) = meta ->
       # Build the metadata path
+      meta_tmp = path <> ".meta.tmp"
       meta_final = path <> ".meta"
 
       # Write the metadata to disk atomically
       with {:ok, _encoded_meta} <- File.read(meta_final),
            meta = meta |> export_meta() |> fun.() |> import_meta(),
-           :ok <- File.write(meta_final, encode_meta(meta(meta, key: hash_key))) do
+           meta = meta(meta, key: hash_key),
+           :ok <- File.write(meta_tmp, encode_meta(meta)),
+           :ok <- File.rename(meta_tmp, meta_final) do
         # Flush the metadata to disk
         :ok = flush_to_disk(meta_final)
 
@@ -324,10 +334,13 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   ## GenServer callbacks
 
   @impl true
-  def init(opts) do
-    # Get required options
-    cache_name = Keyword.fetch!(opts, :cache_name)
-    cache_path = Keyword.fetch!(opts, :cache_path)
+  def init(%{
+        name: cache_name,
+        cache_path: cache_path,
+        metadata_persistence_timeout: meta_sync_timeout
+      }) do
+    # Trap exits to handle crashes
+    Process.flag(:trap_exit, true)
 
     # Create the cache directory if it doesn't exist
     :ok = File.mkdir_p!(cache_path)
@@ -336,13 +349,55 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     meta_table = create_meta_table(cache_name)
 
     # Create the state for the store
-    state = %__MODULE__{cache_name: cache_name, cache_path: cache_path, meta_table: meta_table}
+    state = %__MODULE__{
+      cache_name: cache_name,
+      cache_path: cache_path,
+      meta_table: meta_table,
+      meta_sync_timeout: meta_sync_timeout
+    }
 
     # Load the cache metadata from disk
     :ok = load_cache_metadata(state)
 
     # Return the state
-    {:ok, state}
+    {:ok, state, {:continue, :init}}
+  end
+
+  @impl true
+  def handle_continue(:init, %__MODULE__{meta_sync_timeout: meta_sync_timeout} = state) do
+    # Reset the metadata sync timer
+    meta_sync_ref = reset_timer(meta_sync_timeout)
+
+    {:noreply, %{state | meta_sync_timer_ref: meta_sync_ref}}
+  end
+
+  @impl true
+  def handle_info(message, state)
+
+  def handle_info(
+        :meta_sync,
+        %__MODULE__{
+          meta_table: meta_table,
+          cache_path: cache_path,
+          meta_sync_timeout: meta_sync_timeout,
+          meta_sync_timer_ref: meta_sync_ref
+        } =
+          state
+      ) do
+    # Persist the metadata to disk
+    _count = persist_meta(meta_table, cache_path)
+
+    # Reset the metadata sync timer
+    meta_sync_ref = reset_timer(meta_sync_timeout, meta_sync_ref)
+
+    # Return the state
+    {:noreply, %{state | meta_sync_timer_ref: meta_sync_ref}}
+  end
+
+  @impl true
+  def terminate(_reason, %__MODULE__{meta_table: meta_table, cache_path: cache_path}) do
+    # Persist the metadata to disk
+    persist_meta(meta_table, cache_path)
   end
 
   ## Private functions
@@ -357,6 +412,34 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       keypos: meta(:key) + 1,
       read_concurrency: true
     ])
+  end
+
+  defp reset_timer(time, ref \\ nil, event \\ :meta_sync)
+
+  defp reset_timer(nil, _, _) do
+    nil
+  end
+
+  defp reset_timer(time, ref, event) do
+    _ = if ref, do: Process.cancel_timer(ref)
+
+    Process.send_after(self(), event, time)
+  end
+
+  defp persist_meta(meta_table, cache_path) do
+    fn meta(key: hash_key) = meta, acc ->
+      with_lock(hash_key, @default_lock_retries, fn ->
+        path = cache_key_path(cache_path, hash_key)
+        meta_tmp = path <> ".meta.tmp"
+        meta_final = path <> ".meta"
+
+        with :ok <- File.write(meta_tmp, encode_meta(meta)),
+             :ok <- File.rename(meta_tmp, meta_final) do
+          acc + 1
+        end
+      end)
+    end
+    |> :ets.foldl(0, meta_table)
   end
 
   defp with_meta(meta_table, counter_ref, hash_key, path, retries, lock? \\ true, fun) do
@@ -486,7 +569,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   defp cleanup_all(meta_table, cache_path, hash_key, count) do
-    with_lock(hash_key, 10, fn ->
+    with_lock(hash_key, @default_lock_retries, fn ->
       path = cache_key_path(cache_path, hash_key)
 
       safe_remove(meta_table, hash_key, path)
@@ -541,8 +624,8 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
            meta_table: meta_table,
            bytes_counter: counter_ref,
            max_bytes: max_bytes,
-           eviction_select_limit: select_limit,
-           eviction_victims_limit: victims_limit
+           eviction_victim_sample_size: select_limit,
+           eviction_victim_limit: victims_limit
          } = adapter_meta,
          diff_size,
          retries

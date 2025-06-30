@@ -24,10 +24,15 @@ The adapter is composed of several key modules:
 Responsible for:
 
 - Disk read/write operations for `.cache` and `.meta` files
-- Managing metadata: `access_count`, `inserted_at`, `expired_at`, and `size`
-- LFU-based eviction
-- TTL expiration handling
-- Atomic updates using `:global.trans/4`
+- Managing metadata: `access_count`, `inserted_at`, `expired_at`,
+  and `size_bytes`.
+- LFU-based eviction.
+- TTL expiration handling.
+- Atomic updates using `:global.trans/4`.
+- Persist metadata to disk asynchronously and periodically (configurable).
+  This will enable concurrent reads since the metadata is not persisted
+  immediately. The metadata is updated in memory, but it is dumped to disk
+  later.
 
 Files are stored on disk as:
 

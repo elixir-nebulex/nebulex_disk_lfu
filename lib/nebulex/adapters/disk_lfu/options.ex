@@ -24,20 +24,32 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       size of the cache (default).
       """
     ],
-    eviction_select_limit: [
-      type: :pos_integer,
-      required: false,
-      default: 1000,
-      doc: """
-      The maximum number of eviction victims to select.
-      """
-    ],
-    eviction_victims_limit: [
+    eviction_victim_limit: [
       type: :pos_integer,
       required: false,
       default: 100,
       doc: """
       The maximum number of eviction victims to delete.
+      """
+    ],
+    eviction_victim_sample_size: [
+      type: :pos_integer,
+      required: false,
+      default: 1000,
+      doc: """
+      The size of the sample to select the eviction victims from. After the
+      sample is selected, the victims are sorted by the access count and the
+      last accessed time. Then, the first victims given by
+      `:eviction_victim_limit` are evicted.
+      """
+    ],
+    metadata_persistence_timeout: [
+      type: {:or, [:timeout, nil]},
+      required: false,
+      default: :timer.minutes(10),
+      doc: """
+      The timeout in milliseconds to persist the metadata to disk.
+      When `nil`, the metadata is not persisted to disk.
       """
     ]
   ]

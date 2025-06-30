@@ -18,13 +18,14 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
     {:ok, cache: DiskCache, dir: dir}
   end
 
-  describe "eviction" do
+  describe "eviction scenarios" do
     setup %{dir: dir} do
       {:ok, pid} =
         DiskCache.start_link(
           root_path: dir,
           max_bytes: 20,
-          eviction_victims_limit: 2
+          eviction_victim_limit: 2,
+          metadata_persistence_timeout: nil
         )
 
       on_exit(fn -> safe_stop(pid) end)
@@ -32,7 +33,7 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
       {:ok, pid: pid}
     end
 
-    test "data is evicted when the max bytes is reached", %{cache: cache} do
+    test "1: data is evicted when the max bytes is reached", %{cache: cache} do
       :ok = cache.put("key1", "12345")
       :ok = cache.put("key2", "12345", ttl: 10)
       :ok = cache.put("key3", "12345", ttl: 50)
@@ -53,7 +54,7 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
       assert cache.get!("key5") == "1234567890"
     end
 
-    test "bytes count is updated", %{cache: cache} do
+    test "2: bytes count is updated", %{cache: cache} do
       Enum.each(1..4, &cache.put("key#{&1}", "12345"))
 
       assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
@@ -79,7 +80,7 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
       assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 10
     end
 
-    test "multiple writes to the same key", %{cache: cache} do
+    test "3: multiple writes to the same key", %{cache: cache} do
       :ok = cache.put("key0", "12345")
       :ok = cache.put("key1", "12345")
 
@@ -99,13 +100,13 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
     end
   end
 
-  describe "corner case" do
+  describe "eviction corner cases" do
     setup %{dir: dir} do
       {:ok, pid} =
         DiskCache.start_link(
           root_path: dir,
           max_bytes: 20,
-          eviction_victims_limit: 2
+          eviction_victim_limit: 2
         )
 
       on_exit(fn -> safe_stop(pid) end)
@@ -113,7 +114,7 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
       {:ok, pid: pid}
     end
 
-    test "the initial write size exceeds the max bytes", %{cache: cache} do
+    test "1: the initial write size exceeds the max bytes", %{cache: cache} do
       assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 0
 
       assert {:error, %Nebulex.Error{reason: :max_bytes_exceeded}} =
@@ -122,7 +123,7 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
       assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 0
     end
 
-    test "the next write size exceeds the max bytes", %{cache: cache} do
+    test "2: the next write size exceeds the max bytes", %{cache: cache} do
       str = String.duplicate("12345", 4)
       :ok = cache.put("key1", str)
 
@@ -136,6 +137,38 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
       :ok = cache.put("key1", str)
 
       assert :counters.get(Adapter.lookup_meta(cache).bytes_counter, 1) == 20
+    end
+  end
+
+  describe "metadata persistence" do
+    setup %{dir: dir} do
+      {:ok, pid} =
+        DiskCache.start_link(
+          root_path: dir,
+          metadata_persistence_timeout: 100
+        )
+
+      on_exit(fn -> safe_stop(pid) end)
+
+      {:ok, pid: pid}
+    end
+
+    test "1: metadata is persisted to disk", %{cache: cache, dir: dir} do
+      # Write some data to the cache
+      :ok = cache.put("key1", "12345")
+
+      # Wait for the metadata to be persisted to disk
+      :ok = Process.sleep(200)
+
+      # Restart the cache and check if the metadata is still there
+      :ok = cache.stop()
+      {:ok, _pid} = cache.start_link(root_path: dir)
+
+      # Check if the metadata is still there
+      assert cache.get!("key1") == "12345"
+
+      # Stop the cache
+      :ok = cache.stop()
     end
   end
 end

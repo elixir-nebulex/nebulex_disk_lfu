@@ -389,6 +389,27 @@ defmodule Nebulex.Adapters.DiskLFUTest do
     end
   end
 
+  describe "transaction" do
+    test "with default keys", %{cache: cache} do
+      assert cache.transaction(fn ->
+               cache.put("key", "value")
+             end) == {:ok, :ok}
+    end
+
+    test "with keys", %{cache: cache} do
+      assert cache.transaction(
+               fn ->
+                 cache.put("key1", "value1")
+                 cache.put("key2", "value2")
+               end,
+               keys: ["key1", "key2"]
+             ) == {:ok, :ok}
+
+      assert cache.fetch("key1") == {:ok, "value1"}
+      assert cache.fetch("key2") == {:ok, "value2"}
+    end
+  end
+
   describe "get_all" do
     test "gets all keys", %{cache: cache} do
       :ok = cache.put("key1", "value1")

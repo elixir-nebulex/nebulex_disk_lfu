@@ -55,6 +55,9 @@ defmodule Nebulex.Adapters.DiskLFU do
   @behaviour Nebulex.Adapter.KV
   @behaviour Nebulex.Adapter.Queryable
 
+  # Inherit default transaction implementation
+  use Nebulex.Adapter.Transaction
+
   import Nebulex.Adapter
   import Nebulex.Adapters.DiskLFU.Helpers
   import Nebulex.Time, only: [now: 0]

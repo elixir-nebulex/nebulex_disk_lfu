@@ -5,12 +5,17 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
   import Nebulex.Adapters.DiskLFU.TestUtils
 
   alias Nebulex.Adapter
+  alias Nebulex.Adapters.DiskLFU.Store
+  alias Nebulex.Telemetry
 
   defmodule DiskCache do
     use Nebulex.Cache,
       otp_app: :nebulex_disk_lfu,
       adapter: Nebulex.Adapters.DiskLFU
   end
+
+  # Telemetry prefix for the test
+  @telemetry_prefix Telemetry.default_prefix(DiskCache)
 
   setup do
     dir = Briefly.create!(type: :directory)
@@ -19,6 +24,10 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
   end
 
   describe "eviction scenarios" do
+    @start @telemetry_prefix ++ [:disk_lfu, :eviction, :start]
+    @stop @telemetry_prefix ++ [:disk_lfu, :eviction, :stop]
+    @events [@start, @stop]
+
     setup %{dir: dir} do
       {:ok, pid} =
         DiskCache.start_link(
@@ -34,24 +43,30 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
     end
 
     test "1: data is evicted when the max bytes is reached", %{cache: cache} do
-      :ok = cache.put("key1", "12345")
-      :ok = cache.put("key2", "12345", ttl: 10)
-      :ok = cache.put("key3", "12345", ttl: 50)
-      :ok = cache.put("key4", "12345", ttl: 100)
+      with_telemetry_handler @events, fn ->
+        :ok = cache.put("key1", "12345")
+        :ok = cache.put("key2", "12345", ttl: 10)
+        :ok = cache.put("key3", "12345", ttl: 50)
+        :ok = cache.put("key4", "12345", ttl: 100)
 
-      # Should increment the access count
-      assert cache.get!("key1") == "12345"
+        # Should increment the access count
+        assert cache.get!("key1") == "12345"
 
-      :ok = Process.sleep(20)
+        :ok = Process.sleep(20)
 
-      # This should evict: key2, key3, key4
-      :ok = cache.put("key5", "1234567890", ttl: 100)
+        # This should evict: key2, key3, key4
+        :ok = cache.put("key5", "1234567890", ttl: 100)
 
-      assert cache.get!("key1") == "12345"
-      refute cache.get!("key2")
-      refute cache.get!("key3")
-      refute cache.get!("key4")
-      assert cache.get!("key5") == "1234567890"
+        # Assert the telemetry events for the eviction
+        assert_receive {@start, %{}, %{stored_bytes: 20}}
+        assert_receive {@stop, %{}, %{result: :ok, stored_bytes: 15}}
+
+        assert cache.get!("key1") == "12345"
+        refute cache.get!("key2")
+        refute cache.get!("key3")
+        refute cache.get!("key4")
+        assert cache.get!("key5") == "1234567890"
+      end
     end
 
     test "2: bytes count is updated", %{cache: cache} do
@@ -141,11 +156,15 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
   end
 
   describe "metadata persistence" do
+    @start @telemetry_prefix ++ [:disk_lfu, :persist_meta, :start]
+    @stop @telemetry_prefix ++ [:disk_lfu, :persist_meta, :stop]
+    @events [@start, @stop]
+
     setup %{dir: dir} do
       {:ok, pid} =
         DiskCache.start_link(
           root_path: dir,
-          metadata_persistence_timeout: 100
+          metadata_persistence_timeout: 500
         )
 
       on_exit(fn -> safe_stop(pid) end)
@@ -154,21 +173,87 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
     end
 
     test "1: metadata is persisted to disk", %{cache: cache, dir: dir} do
-      # Write some data to the cache
-      :ok = cache.put("key1", "12345")
+      with_telemetry_handler @events, fn ->
+        # Write some data to the cache
+        :ok = cache.put("key1", "12345")
 
-      # Wait for the metadata to be persisted to disk
-      :ok = Process.sleep(200)
+        # Should increment the access count
+        assert cache.get!("key1") == "12345"
 
-      # Restart the cache and check if the metadata is still there
-      :ok = cache.stop()
-      {:ok, _pid} = cache.start_link(root_path: dir)
+        # Check if the metadata is updated
+        assert {:ok, meta} = fetch_meta(cache, "key1")
+        assert meta.access_count == 1
 
-      # Check if the metadata is still there
-      assert cache.get!("key1") == "12345"
+        # Metadata persistence should have stopped
+        assert_receive {@stop, %{}, %{}}, 1000
 
-      # Stop the cache
-      :ok = cache.stop()
+        # Restart the cache and check if the metadata is still there
+        :ok = cache.stop()
+        {:ok, _pid} = cache.start_link(root_path: dir)
+
+        # Check if the metadata is updated
+        assert {:ok, meta} = fetch_meta(cache, "key1")
+        assert meta.access_count == 1
+
+        # Stop the cache
+        :ok = cache.stop()
+      end
     end
+
+    test "2: fails because lock timeout", %{cache: cache, dir: dir} do
+      with_telemetry_handler @events, fn ->
+        # Write some data to the cache
+        :ok = cache.put("key1", "12345")
+
+        # Should increment the access count
+        assert cache.get!("key1") == "12345"
+
+        # Check if the metadata is updated
+        assert {:ok, meta} = fetch_meta(cache, "key1")
+        assert meta.access_count == 1
+
+        # Metadata persistence should start
+        assert_receive {@start, %{}, %{store_pid: store_pid}}, 1000
+
+        # Metadata persistence should stop
+        assert_receive {@stop, %{}, %{}}, 1000
+
+        # Simulate a lock timeout
+        File
+        |> stub(:write, fn _, _ -> {:error, :lock_timeout} end)
+        |> allow(self(), store_pid)
+
+        # Should increment the access count
+        assert cache.get!("key1") == "12345"
+
+        # Check if the metadata is updated
+        assert {:ok, meta} = fetch_meta(cache, "key1")
+        assert meta.access_count == 2
+
+        # Metadata persistence should start
+        assert_receive {@start, %{}, %{}}, 1000
+
+        # Metadata persistence should stop
+        assert_receive {@stop, %{}, %{}}, 1000
+
+        # Restart the cache and check if the metadata is still there
+        :ok = cache.stop()
+        {:ok, _pid} = cache.start_link(root_path: dir)
+
+        # The metadata should not be persisted due to the lock timeout
+        assert {:ok, meta} = fetch_meta(cache, "key1")
+        assert meta.access_count == 1
+
+        # Stop the cache
+        :ok = cache.stop()
+      end
+    end
+  end
+
+  ## Private functions
+
+  defp fetch_meta(cache, key) do
+    Adapter.lookup_meta(cache)
+    |> Store.fetch_meta(key, 10)
   end
 end

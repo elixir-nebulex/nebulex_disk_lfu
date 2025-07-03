@@ -10,6 +10,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   import Nebulex.Utils, only: [camelize_and_concat: 1]
 
   alias Nebulex.Adapters.DiskLFU.Meta
+  alias Nebulex.Telemetry
 
   ## Meta definition
 
@@ -55,7 +56,8 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
             cache_path: nil,
             meta_table: nil,
             meta_sync_timeout: nil,
-            meta_sync_timer_ref: nil
+            meta_sync_timer_ref: nil,
+            telemetry_prefix: nil
 
   # Default lock retries
   @default_lock_retries 10
@@ -119,7 +121,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       new_size = byte_size(binary)
 
       # Write the binary to disk
-      with :ok <- maybe_trigger_eviction(adapter_meta, current_size, new_size, retries),
+      with :ok <- maybe_trigger_eviction(adapter_meta, current_size, new_size),
            :ok <- File.write(cache_tmp, binary, [:binary, :write]),
            _ignore = update_stack(base_path, cache_tmp),
            :ok <- File.write(meta_tmp, encode_meta(meta)),
@@ -368,7 +370,8 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   def init(%{
         name: cache_name,
         cache_path: cache_path,
-        metadata_persistence_timeout: meta_sync_timeout
+        metadata_persistence_timeout: meta_sync_timeout,
+        telemetry_prefix: telemetry_prefix
       }) do
     # Trap exits to handle crashes
     Process.flag(:trap_exit, true)
@@ -384,7 +387,8 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       cache_name: cache_name,
       cache_path: cache_path,
       meta_table: meta_table,
-      meta_sync_timeout: meta_sync_timeout
+      meta_sync_timeout: meta_sync_timeout,
+      telemetry_prefix: telemetry_prefix
     }
 
     # Load the cache metadata from disk
@@ -411,12 +415,12 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
           meta_table: meta_table,
           cache_path: cache_path,
           meta_sync_timeout: meta_sync_timeout,
-          meta_sync_timer_ref: meta_sync_ref
-        } =
-          state
+          meta_sync_timer_ref: meta_sync_ref,
+          telemetry_prefix: telemetry_prefix
+        } = state
       ) do
     # Persist the metadata to disk
-    _count = persist_meta(meta_table, cache_path)
+    _count = persist_meta(meta_table, cache_path, telemetry_prefix)
 
     # Reset the metadata sync timer
     meta_sync_ref = reset_timer(meta_sync_timeout, meta_sync_ref)
@@ -426,9 +430,13 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   @impl true
-  def terminate(_reason, %__MODULE__{meta_table: meta_table, cache_path: cache_path}) do
+  def terminate(_reason, %__MODULE__{
+        meta_table: meta_table,
+        cache_path: cache_path,
+        telemetry_prefix: telemetry_prefix
+      }) do
     # Persist the metadata to disk
-    persist_meta(meta_table, cache_path)
+    persist_meta(meta_table, cache_path, telemetry_prefix)
   end
 
   ## Private functions
@@ -457,9 +465,10 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     Process.send_after(self(), event, time)
   end
 
-  defp persist_meta(meta_table, cache_path) do
-    fn meta(key: hash_key) = meta, acc ->
-      with_lock(hash_key, @default_lock_retries, fn ->
+  defp persist_meta(meta_table, cache_path, telemetry_prefix) do
+    # Define the persist function
+    persist_fun = fn meta(key: hash_key) = meta, acc ->
+      fun = fn ->
         path = cache_key_path(cache_path, hash_key)
         meta_tmp = path <> ".meta.tmp"
         meta_final = path <> ".meta"
@@ -468,9 +477,28 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
              :ok <- File.rename(meta_tmp, meta_final) do
           acc + 1
         end
-      end)
+      end
+
+      with {:error, :lock_timeout} <- with_lock(hash_key, @default_lock_retries, fun) do
+        # If a timeout occurs, skip the file and return the accumulator
+        acc
+      end
     end
-    |> :ets.foldl(0, meta_table)
+
+    # Define the telemetry metadata
+    telemetry_metadata = %{
+      store_pid: self(),
+      count: 0
+    }
+
+    # Wrap the persist function in a telemetry span
+    Telemetry.span(telemetry_prefix ++ [:disk_lfu, :persist_meta], telemetry_metadata, fn ->
+      # Persist the metadata to disk
+      count = :ets.foldl(persist_fun, 0, meta_table)
+
+      # Update the telemetry metadata with the count
+      {count, %{telemetry_metadata | count: count}}
+    end)
   end
 
   defp with_meta(meta_table, counter_ref, hash_key, path, retries, lock? \\ true, fun) do
@@ -622,8 +650,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
            max_bytes: max_bytes
          } = adapter_meta,
          current_size,
-         new_size,
-         retries
+         new_size
        ) do
     # Get base metrics
     bytes_count = :counters.get(counter_ref, 1)
@@ -638,10 +665,10 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       # If the new size exceeds the max bytes, run the eviction process
       bytes_count + diff_size > max_bytes ->
         # Run the eviction process
-        :ok = run_eviction(adapter_meta, diff_size, retries)
+        :ok = run_eviction(adapter_meta, diff_size, bytes_count)
 
         # Continue with the eviction process
-        maybe_trigger_eviction(adapter_meta, current_size, new_size, retries)
+        maybe_trigger_eviction(adapter_meta, current_size, new_size)
 
       # Skip the eviction process
       true ->
@@ -651,6 +678,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
   defp run_eviction(
          %{
+           telemetry_prefix: telemetry_prefix,
            cache_path: cache_path,
            meta_table: meta_table,
            bytes_counter: counter_ref,
@@ -659,11 +687,10 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
            eviction_victim_limit: victims_limit
          } = adapter_meta,
          diff_size,
-         retries
+         bytes_count
        ) do
-    # Locking at the cache directory level is required to avoid race conditions
-    # when multiple processes are trying to evict at the same time
-    with_lock(cache_path, retries, fn ->
+    # Define the eviction function
+    eviction_fun = fn ->
       # We need to check again if the new size plus the current size exceeds
       # the max bytes because the counter could have been updated by another
       # process while we were waiting for the lock
@@ -679,6 +706,35 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
         # Delete the victims from disk
         |> Enum.each(&delete_from_disk(adapter_meta, elem(&1, 2), 10))
       end
+
+      # Acknoledge the eviction
+      :ok
+    end
+
+    # Define the telemetry metadata
+    telemetry_metadata = %{
+      stored_bytes: bytes_count,
+      max_bytes: max_bytes,
+      victim_sample_size: select_limit,
+      victims_limit: victims_limit,
+      result: nil
+    }
+
+    # Wrap the eviction function in a telemetry span
+    Telemetry.span(telemetry_prefix ++ [:disk_lfu, :eviction], telemetry_metadata, fn ->
+      # Locking at the cache directory level is required to avoid race conditions
+      # when multiple processes are trying to evict at the same time
+      result = with_lock(cache_path, :infinity, eviction_fun)
+
+      # Update the telemetry metadata with the result and the new stored bytes
+      telemetry_metadata = %{
+        telemetry_metadata
+        | result: result,
+          stored_bytes: :counters.get(counter_ref, 1)
+      }
+
+      # Return the result and the telemetry metadata
+      {result, telemetry_metadata}
     end)
   end
 

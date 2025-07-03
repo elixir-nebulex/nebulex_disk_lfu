@@ -114,7 +114,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     # Create the child spec for the store
     child_spec =
       Supervisor.child_spec(
-        {Store, adapter_meta},
+        {Store, Map.put(adapter_meta, :telemetry_prefix, Keyword.fetch!(opts, :telemetry_prefix))},
         id: {__MODULE__, camelize_and_concat([name, Store])}
       )
 

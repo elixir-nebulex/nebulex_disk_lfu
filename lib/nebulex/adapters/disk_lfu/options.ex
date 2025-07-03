@@ -46,7 +46,7 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
     metadata_persistence_timeout: [
       type: {:or, [:timeout, nil]},
       required: false,
-      default: :timer.minutes(10),
+      default: :timer.minutes(1),
       doc: """
       The timeout in milliseconds to persist the metadata to disk.
       When `nil`, the metadata is not persisted to disk.

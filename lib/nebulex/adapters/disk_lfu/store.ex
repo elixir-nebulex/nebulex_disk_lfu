@@ -246,6 +246,14 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   @doc """
+  Checks if the key exists in the meta table.
+  """
+  @spec exists?(atom(), String.t()) :: boolean()
+  def exists?(meta_table, key) do
+    :ets.member(meta_table, hash_key(key))
+  end
+
+  @doc """
   Fetches the meta for the given key.
   """
   @spec fetch_meta(adapter_meta(), String.t(), timeout()) ::
@@ -362,6 +370,31 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @spec get_all_keys(atom()) :: [String.t()]
   def get_all_keys(meta_table) do
     :ets.select(meta_table, meta_match_spec())
+  end
+
+  @doc """
+  Gets all the keys from the meta table.
+  """
+  @spec get_all_keys(atom(), [String.t()]) :: [String.t()]
+  def get_all_keys(meta_table, keys)
+
+  def get_all_keys(_meta_table, []) do
+    []
+  end
+
+  def get_all_keys(meta_table, [k1]) do
+    :ets.select(meta_table, meta_match_spec([meta_match_key(k1, now())]))
+  end
+
+  def get_all_keys(meta_table, [k1, k2 | keys]) do
+    now = now()
+
+    conds =
+      Enum.reduce(keys, {:orelse, meta_match_key(k1, now), meta_match_key(k2, now)}, fn k, acc ->
+        {:orelse, acc, meta_match_key(k, now)}
+      end)
+
+    :ets.select(meta_table, meta_match_spec([conds]))
   end
 
   ## GenServer callbacks
@@ -492,7 +525,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     }
 
     # Wrap the persist function in a telemetry span
-    Telemetry.span(telemetry_prefix ++ [:disk_lfu, :persist_meta], telemetry_metadata, fn ->
+    Telemetry.span(telemetry_prefix ++ [:persist_meta], telemetry_metadata, fn ->
       # Persist the metadata to disk
       count = :ets.foldl(persist_fun, 0, meta_table)
 
@@ -684,7 +717,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
            bytes_counter: counter_ref,
            max_bytes: max_bytes,
            eviction_victim_sample_size: select_limit,
-           eviction_victim_limit: victims_limit
+           eviction_victim_limit: victim_limit
          } = adapter_meta,
          diff_size,
          bytes_count
@@ -702,7 +735,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
         # The term is: {access_count, last_accessed_at, key}
         |> Enum.sort()
         # Take the victims limit
-        |> Enum.take(victims_limit)
+        |> Enum.take(victim_limit)
         # Delete the victims from disk
         |> Enum.each(&delete_from_disk(adapter_meta, elem(&1, 2), 10))
       end
@@ -716,12 +749,12 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       stored_bytes: bytes_count,
       max_bytes: max_bytes,
       victim_sample_size: select_limit,
-      victims_limit: victims_limit,
+      victim_limit: victim_limit,
       result: nil
     }
 
     # Wrap the eviction function in a telemetry span
-    Telemetry.span(telemetry_prefix ++ [:disk_lfu, :eviction], telemetry_metadata, fn ->
+    Telemetry.span(telemetry_prefix ++ [:eviction], telemetry_metadata, fn ->
       # Locking at the cache directory level is required to avoid race conditions
       # when multiple processes are trying to evict at the same time
       result = with_lock(cache_path, :infinity, eviction_fun)
@@ -870,5 +903,9 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
          metadata: :"$9"
        ), conds, [return]}
     ]
+  end
+
+  defp meta_match_key(k, now) do
+    {:andalso, {:"=:=", :"$2", k}, {:orelse, {:"=:=", :"$8", :infinity}, {:<, now, :"$8"}}}
   end
 end

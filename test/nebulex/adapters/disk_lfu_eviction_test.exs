@@ -24,8 +24,8 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
   end
 
   describe "eviction scenarios" do
-    @start @telemetry_prefix ++ [:disk_lfu, :eviction, :start]
-    @stop @telemetry_prefix ++ [:disk_lfu, :eviction, :stop]
+    @start @telemetry_prefix ++ [:eviction, :start]
+    @stop @telemetry_prefix ++ [:eviction, :stop]
     @events [@start, @stop]
 
     setup %{dir: dir} do
@@ -156,8 +156,8 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
   end
 
   describe "metadata persistence" do
-    @start @telemetry_prefix ++ [:disk_lfu, :persist_meta, :start]
-    @stop @telemetry_prefix ++ [:disk_lfu, :persist_meta, :stop]
+    @start @telemetry_prefix ++ [:persist_meta, :start]
+    @stop @telemetry_prefix ++ [:persist_meta, :stop]
     @events [@start, @stop]
 
     setup %{dir: dir} do

@@ -22,15 +22,15 @@ defmodule Nebulex.Adapters.DiskLFU do
   See the [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)
   document for more information.
 
-  ## Options
+  ## Startup options
 
-  The adapter supports the following options:
+  The following options are available for the adapter at startup:
 
   #{Nebulex.Adapters.DiskLFU.Options.start_options_docs()}
 
-  ## Shared options
+  ## Shared runtime options
 
-  The adapter supports the following options for all operations:
+  The following options are available for all operations:
 
   #{Nebulex.Adapters.DiskLFU.Options.common_runtime_options_docs()}
 
@@ -47,6 +47,129 @@ defmodule Nebulex.Adapters.DiskLFU do
   (e.g., `put`, `put_new`, `replace`, `put_all`, `put_new_all`):
 
   #{Nebulex.Adapters.DiskLFU.Options.write_options_docs()}
+
+  ## Adapter-specific telemetry events
+
+  This adapter exposes following Telemetry events:
+
+    * `telemetry_prefix ++ [:eviction, :start]` - Dispatched by the
+      adapter when the eviction process is started.
+
+      * Measurements: `%{system_time: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          stored_bytes: non_neg_integer(),
+          max_bytes: non_neg_integer(),
+          victim_sample_size: non_neg_integer(),
+          victim_limit: non_neg_integer()
+        }
+        ```
+
+    * `telemetry_prefix ++ [:eviction, :stop]` - Dispatched by the
+      adapter when the eviction process is stopped.
+
+      * Measurements: `%{duration: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          stored_bytes: non_neg_integer(),
+          max_bytes: non_neg_integer(),
+          victim_sample_size: non_neg_integer(),
+          victim_limit: non_neg_integer(),
+          result: term()
+        }
+        ```
+
+    * `telemetry_prefix ++ [:eviction, :exception]` - Dispatched by
+      the adapter when the eviction process fails due to an exception.
+
+      * Measurements: `%{duration: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          stored_bytes: non_neg_integer(),
+          max_bytes: non_neg_integer(),
+          victim_sample_size: non_neg_integer(),
+          victim_limit: non_neg_integer(),
+          kind: :error | :exit | :throw,
+          reason: term(),
+          stacktrace: [term()]
+        }
+        ```
+
+    * `telemetry_prefix ++ [:persist_meta, :start]` - Dispatched by
+      the adapter when the metadata persistence process is started.
+
+      * Measurements: `%{system_time: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          store_pid: pid()
+        }
+        ```
+
+    * `telemetry_prefix ++ [:persist_meta, :stop]` - Dispatched by
+      the adapter when the metadata persistence process is stopped.
+
+      * Measurements: `%{system_time: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          store_pid: pid(),
+          count: non_neg_integer()
+        }
+        ```
+
+    * `telemetry_prefix ++ [:persist_meta, :exception]` - Dispatched by
+      the adapter when the metadata persistence process fails due to an
+      exception.
+
+      * Measurements: `%{duration: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          store_pid: pid(),
+          count: non_neg_integer(),
+          kind: :error | :exit | :throw,
+          reason: term(),
+          stacktrace: [term()]
+        }
+
+  ## CAVEATS
+
+  - The adapter does not support `incr` and `decr` operations.
+  - The adapter does not support `put_new`, `replace`, and `put_new_all`
+    operations; they all work as `put` operations. However, it is planned to
+    support them in the future.
+  - The `count_all` only supports counting all keys in the cache (e.g.,
+    `MyCache.count_all()`), and counting the given keys (e.g.,
+    `MyCache.count_all([:k1, :k2])`). However, this operation is not atomic.
+    If an error occurs while counting, it is skipped and the count may be
+    inaccurate.
+  - The `delete_all` only supports deleting all keys in the cache (e.g.,
+    `MyCache.delete_all()`), and deleting the given keys (e.g.,
+    `MyCache.delete_all([:k1, :k2])`). However, this operation is not atomic.
+    If an error occurs while deleting, it is skipped and the deletion may be
+    incomplete.
+  - The `get_all` only supports getting all keys in the cache (e.g.,
+    `MyCache.get_all()`), and getting the given keys (e.g.,
+    `MyCache.get_all([:k1, :k2])`).
+  - The `stream` only supports streaming all keys in the cache (e.g.,
+    `MyCache.stream()`), and streaming the given keys (e.g.,
+    `MyCache.stream([:k1, :k2])`).
+  - Any write or delete operation (e.g., `put`, `put_all`, `delete`, `take`)
+    is blocking and is performed atomically (on the given key or keys). This
+    is done to make the adapter more robust, ensuring consistency, and avoiding
+    race conditions or write conflicts.
+  - A read operation may be blocking if the key is expired and has to be removed
+    from the cache.
 
   """
 
@@ -291,11 +414,47 @@ defmodule Nebulex.Adapters.DiskLFU do
   end
 
   def execute(
+        %{meta_table: meta_table},
+        %{op: :count_all, query: {:in, keys}},
+        _opts
+      ) do
+    count =
+      Enum.reduce(keys, 0, fn key, acc ->
+        if Store.exists?(meta_table, key) do
+          acc + 1
+        else
+          acc
+        end
+      end)
+
+    {:ok, count}
+  end
+
+  def execute(
         %{meta_table: meta_table, cache_path: cache_path},
         %{op: :delete_all, query: {:q, nil}},
         _opts
       ) do
     {:ok, Store.delete_all_from_disk(meta_table, cache_path)}
+  end
+
+  def execute(
+        adapter_meta,
+        %{op: :delete_all, query: {:in, keys}},
+        opts
+      ) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    count =
+      Enum.reduce(keys, 0, fn key, acc ->
+        case Store.delete_from_disk(adapter_meta, key, retries) do
+          :ok -> acc + 1
+          {:error, _} -> acc
+        end
+      end)
+
+    {:ok, count}
   end
 
   def execute(
@@ -306,9 +465,17 @@ defmodule Nebulex.Adapters.DiskLFU do
     {:ok, Store.get_all_keys(meta_table)}
   end
 
+  def execute(
+        %{meta_table: meta_table},
+        %{op: :get_all, query: {:in, keys}},
+        _opts
+      ) do
+    {:ok, Store.get_all_keys(meta_table, keys)}
+  end
+
   def execute(_adapter_meta, %{op: op, query: query}, _opts) do
     # TODO: Support more queries in the future
-    # E.g., `{:in, [...]}`, `{:q, match_spec}`, etc.
+    # E.g., `{:q, match_spec}`
     raise ArgumentError, "`#{op}` does not support query: #{inspect(query)}"
   end
 

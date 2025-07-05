@@ -20,33 +20,33 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "fetch" do
-    test "fetches a value from the cache", %{cache: cache} do
+    test "ok: fetches a value from the cache", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.fetch("key") == {:ok, "value"}
     end
 
-    test "returns error for non-existent key", %{cache: cache} do
+    test "error: returns error for non-existent key", %{cache: cache} do
       assert_raise Nebulex.KeyError, "key \"nonexistent\" not found", fn ->
         cache.fetch!("nonexistent")
       end
     end
 
-    test "handles binary data", %{cache: cache} do
+    test "ok: handles binary data", %{cache: cache} do
       binary_data = :crypto.strong_rand_bytes(100)
       :ok = cache.put("binary_key", binary_data)
 
       assert cache.fetch("binary_key") == {:ok, binary_data}
     end
 
-    test "handles large data", %{cache: cache} do
+    test "ok: handles large data", %{cache: cache} do
       large_data = String.duplicate("large data", 1000)
       :ok = cache.put("large_key", large_data)
 
       assert cache.fetch("large_key") == {:ok, large_data}
     end
 
-    test "handles metadata", %{cache: cache} do
+    test "ok: handles metadata", %{cache: cache} do
       :ok = cache.put("key", "value", metadata: %{foo: "bar"})
 
       assert cache.fetch("key") == {:ok, "value"}
@@ -54,7 +54,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("key", return: &{&1, &2}) == {:ok, {"value", %{foo: "bar"}}}
     end
 
-    test "handles ttl", %{cache: cache} do
+    test "error: returns error for expired key", %{cache: cache} do
       :ok = cache.put("key", "value", ttl: 1)
 
       :ok = Process.sleep(100)
@@ -62,7 +62,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert {:error, %Nebulex.KeyError{reason: :expired}} = cache.fetch("key")
     end
 
-    test "file has been removed", %{cache: cache} do
+    test "error: file has been removed", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       File
@@ -73,7 +73,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "put" do
-    test "puts a value in the cache", %{cache: cache} do
+    test "ok: puts a value in the cache", %{cache: cache} do
       assert cache.put("key", "value") == :ok
       assert cache.fetch("key") == {:ok, "value"}
 
@@ -81,33 +81,33 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("key") == {:ok, "value2"}
     end
 
-    test "overwrites existing value", %{cache: cache} do
+    test "ok: overwrites existing value", %{cache: cache} do
       :ok = cache.put("key", "old_value")
       :ok = cache.put("key", "new_value")
 
       assert cache.fetch("key") == {:ok, "new_value"}
     end
 
-    test "puts a value in the cache with metadata", %{cache: cache} do
+    test "ok: puts a value in the cache with metadata", %{cache: cache} do
       assert cache.put("key", "value", metadata: %{foo: "bar"}) == :ok
       assert cache.fetch("key") == {:ok, "value"}
 
       assert cache.fetch("key", return: :metadata) == {:ok, %{foo: "bar"}}
     end
 
-    test "raises an error if the key is not a binary", %{cache: cache} do
+    test "error: raises an error if the key is not a binary", %{cache: cache} do
       assert_raise ArgumentError, "the key must be a binary, got: 123", fn ->
         cache.put(123, "value")
       end
     end
 
-    test "raises an error if the value is not a binary", %{cache: cache} do
+    test "error: raises an error if the value is not a binary", %{cache: cache} do
       assert_raise ArgumentError, "the value must be a binary, got: nil", fn ->
         cache.put("key", nil)
       end
     end
 
-    test "rollback on error", %{cache: cache} do
+    test "error: rollback on error", %{cache: cache} do
       File
       |> Mimic.expect(:rename, fn _, _ -> {:error, :enoent} end)
 
@@ -117,7 +117,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "put_all" do
-    test "puts multiple entries at once", %{cache: cache} do
+    test "ok: puts multiple entries at once", %{cache: cache} do
       entries = [{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}]
 
       assert cache.put_all(entries) == :ok
@@ -127,11 +127,11 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("key3") == {:ok, "value3"}
     end
 
-    test "handles empty entries list", %{cache: cache} do
+    test "ok: handles empty entries list", %{cache: cache} do
       assert cache.put_all([]) == :ok
     end
 
-    test "overwrites existing entries", %{cache: cache} do
+    test "ok: overwrites existing entries", %{cache: cache} do
       :ok = cache.put("key1", "old_value")
       entries = [{"key1", "new_value"}, {"key2", "value2"}]
 
@@ -141,19 +141,19 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("key2") == {:ok, "value2"}
     end
 
-    test "raises an error if the key is not a binary", %{cache: cache} do
+    test "error: raises an error if the key is not a binary", %{cache: cache} do
       assert_raise ArgumentError, "the key must be a binary, got: 123", fn ->
         cache.put_all([{123, "value"}])
       end
     end
 
-    test "raises an error if the value is not a binary", %{cache: cache} do
+    test "error: raises an error if the value is not a binary", %{cache: cache} do
       assert_raise ArgumentError, "the value must be a binary, got: nil", fn ->
         cache.put_all([{"key", nil}])
       end
     end
 
-    test "rollback on error", %{cache: cache} do
+    test "error: rollback on error", %{cache: cache} do
       File
       |> Mimic.expect(:rename, fn _, _ -> {:error, :enoent} end)
 
@@ -163,7 +163,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "delete" do
-    test "deletes an existing key", %{cache: cache} do
+    test "ok: deletes an existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.delete("key") == :ok
@@ -173,11 +173,11 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       end
     end
 
-    test "returns ok for non-existent key", %{cache: cache} do
+    test "ok: returns ok for non-existent key", %{cache: cache} do
       assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.delete("nonexistent")
     end
 
-    test "handles ttl", %{cache: cache} do
+    test "error: returns error for expired key", %{cache: cache} do
       :ok = cache.put("key", "value", ttl: 1)
 
       :ok = Process.sleep(100)
@@ -185,7 +185,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert {:error, %Nebulex.KeyError{reason: :expired}} = cache.delete("key")
     end
 
-    test "can delete and then put the same key again", %{cache: cache} do
+    test "ok: can delete and then put the same key again", %{cache: cache} do
       :ok = cache.put("key", "value1")
       :ok = cache.delete("key")
       :ok = cache.put("key", "value2")
@@ -195,7 +195,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "take" do
-    test "takes a value and removes it from cache", %{cache: cache} do
+    test "ok: takes a value and removes it from cache", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.take("key") == {:ok, "value"}
@@ -205,7 +205,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       end
     end
 
-    test "handles metadata", %{cache: cache} do
+    test "ok: handles metadata", %{cache: cache} do
       :ok = cache.put("bin", "value", metadata: %{foo: "bar"})
       :ok = cache.put("meta", "value", metadata: %{foo: "bar"})
       :ok = cache.put("{bin, meta}", "value", metadata: %{foo: "bar"})
@@ -215,13 +215,13 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.take("{bin, meta}", return: &{&1, &2}) == {:ok, {"value", %{foo: "bar"}}}
     end
 
-    test "returns error for non-existent key", %{cache: cache} do
+    test "error: returns error for non-existent key", %{cache: cache} do
       assert_raise Nebulex.KeyError, "key \"nonexistent\" not found", fn ->
         cache.take!("nonexistent")
       end
     end
 
-    test "handles binary data with take", %{cache: cache} do
+    test "ok: handles binary data with take", %{cache: cache} do
       binary_data = :crypto.strong_rand_bytes(50)
       :ok = cache.put("binary_key", binary_data)
 
@@ -232,7 +232,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       end
     end
 
-    test "handles ttl", %{cache: cache} do
+    test "error: returns error for expired key", %{cache: cache} do
       :ok = cache.put("key", "value", ttl: 1)
 
       :ok = Process.sleep(100)
@@ -242,17 +242,17 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "has_key?" do
-    test "returns true for existing key", %{cache: cache} do
+    test "ok: returns true for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.has_key?("key") == {:ok, true}
     end
 
-    test "returns false for non-existent key", %{cache: cache} do
+    test "ok: returns false for non-existent key", %{cache: cache} do
       assert cache.has_key?("nonexistent") == {:ok, false}
     end
 
-    test "returns false after deletion", %{cache: cache} do
+    test "ok: returns false after deletion", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.has_key?("key") == {:ok, true}
@@ -262,7 +262,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.has_key?("key") == {:ok, false}
     end
 
-    test "returns an error", %{cache: cache} do
+    test "error: returns an error", %{cache: cache} do
       :ok = cache.put("key", "value", ttl: 1)
 
       :ok = Process.sleep(100)
@@ -275,20 +275,20 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "ttl" do
-    test "returns infinity for existing key", %{cache: cache} do
+    test "ok: returns infinity for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.ttl("key") == {:ok, :infinity}
     end
 
-    test "returns ttl for existing key", %{cache: cache} do
+    test "ok: returns ttl for existing key", %{cache: cache} do
       :ok = cache.put("key", "value", ttl: :timer.seconds(10))
 
       assert {:ok, ttl} = cache.ttl("key")
       assert ttl > 0
     end
 
-    test "returns error for non-existent key", %{cache: cache} do
+    test "error: returns error for non-existent key", %{cache: cache} do
       assert_raise Nebulex.KeyError, "key \"nonexistent\" not found", fn ->
         cache.ttl!("nonexistent")
       end
@@ -296,7 +296,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "expire" do
-    test "returns true for existing key", %{cache: cache} do
+    test "ok: returns true for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.expire("key", 1000) == {:ok, true}
@@ -305,11 +305,11 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert ttl > 0
     end
 
-    test "returns false for non-existent key", %{cache: cache} do
+    test "ok: returns false for non-existent key", %{cache: cache} do
       assert cache.expire("nonexistent", 1000) == {:ok, false}
     end
 
-    test "returns false after deletion", %{cache: cache} do
+    test "ok: returns false after deletion", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.expire("key", 1000) == {:ok, true}
@@ -319,7 +319,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.expire("key", 1000) == {:ok, false}
     end
 
-    test "returns an error", %{cache: cache} do
+    test "error: returns an error", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       File
@@ -330,17 +330,17 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "touch" do
-    test "returns true for existing key", %{cache: cache} do
+    test "ok: returns true for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.touch("key") == {:ok, true}
     end
 
-    test "returns false for non-existent key", %{cache: cache} do
+    test "ok: returns false for non-existent key", %{cache: cache} do
       assert cache.touch("nonexistent") == {:ok, false}
     end
 
-    test "returns false after deletion", %{cache: cache} do
+    test "ok: returns false after deletion", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       assert cache.touch("key") == {:ok, true}
@@ -350,7 +350,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.touch("key") == {:ok, false}
     end
 
-    test "returns an error", %{cache: cache} do
+    test "error: returns an error", %{cache: cache} do
       :ok = cache.put("key", "value")
 
       File
@@ -361,13 +361,13 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "incr" do
-    test "raises an error", %{cache: cache} do
+    test "error: raises an error", %{cache: cache} do
       assert {:error, %Nebulex.Error{reason: :not_supported}} = cache.incr("key")
     end
   end
 
   describe "count_all" do
-    test "counts all entries", %{cache: cache} do
+    test "ok: counts all entries", %{cache: cache} do
       :ok = cache.put("key1", "value1")
       :ok = cache.put("key2", "value2")
 
@@ -375,10 +375,17 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.get!("key1") == "value1"
       assert cache.get!("key2") == "value2"
     end
+
+    test "ok: counts all entries with query", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.count_all(in: ["key1", "key2", "key3"]) == {:ok, 2}
+    end
   end
 
   describe "delete_all" do
-    test "deletes all entries", %{cache: cache} do
+    test "ok: deletes all entries", %{cache: cache} do
       :ok = cache.put("key1", "value1")
       :ok = cache.put("key2", "value2")
 
@@ -387,16 +394,90 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.fetch("key1")
       assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.fetch("key2")
     end
+
+    test "ok: deletes all entries with query", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.delete_all(in: ["key1", "key2"]) == {:ok, 2}
+    end
+
+    test "error: delete given keys fails", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      Nebulex.Adapters.DiskLFU.Store
+      |> expect(:delete_from_disk, fn _, _, _ -> {:error, :enoent} end)
+
+      assert cache.delete_all(in: ["key1", "key2"]) == {:ok, 1}
+
+      assert cache.has_key?("key1") == {:ok, true}
+
+      # The key2 should not be deleted because the delete_from_disk failed
+      assert cache.has_key?("key2") == {:ok, false}
+    end
+  end
+
+  describe "get_all" do
+    test "ok: gets all keys", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.get_all!() |> Enum.sort() == ["key1", "key2"]
+    end
+
+    test "ok: gets all keys with query", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.get_all!(in: []) == []
+      assert cache.get_all!(in: ["key1"]) |> Enum.sort() == ["key1"]
+      assert cache.get_all!(in: ["key1", "key2", "key3"]) |> Enum.sort() == ["key1", "key2"]
+    end
+
+    test "error: raises an error if the query is not supported", %{cache: cache} do
+      assert_raise ArgumentError, "`get_all` does not support query: {:q, \"invalid\"}", fn ->
+        cache.get_all(query: "invalid")
+      end
+    end
+  end
+
+  describe "stream" do
+    test "ok: streams all keys", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.stream!() |> Enum.to_list() |> Enum.sort() == ["key1", "key2"]
+    end
+
+    test "ok: streams all keys with query", %{cache: cache} do
+      :ok = cache.put("key1", "value1")
+      :ok = cache.put("key2", "value2")
+
+      assert cache.stream!(in: []) |> Enum.to_list() == []
+      assert cache.stream!(in: ["key1"]) |> Enum.to_list() |> Enum.sort() == ["key1"]
+
+      assert cache.stream!(in: ["key1", "key2", "key3"]) |> Enum.to_list() == [
+               "key1",
+               "key2"
+             ]
+    end
+
+    test "error: raises an error if the query is not supported", %{cache: cache} do
+      assert_raise ArgumentError, ~r"does not support query: {:q, \"invalid\"}", fn ->
+        cache.stream!(query: "invalid") |> Enum.to_list()
+      end
+    end
   end
 
   describe "transaction" do
-    test "with default keys", %{cache: cache} do
+    test "ok: succeeds with default keys", %{cache: cache} do
       assert cache.transaction(fn ->
                cache.put("key", "value")
              end) == {:ok, :ok}
     end
 
-    test "with keys", %{cache: cache} do
+    test "ok: succeeds with the given keys", %{cache: cache} do
       assert cache.transaction(
                fn ->
                  cache.put("key1", "value1")
@@ -407,36 +488,6 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
       assert cache.fetch("key1") == {:ok, "value1"}
       assert cache.fetch("key2") == {:ok, "value2"}
-    end
-  end
-
-  describe "get_all" do
-    test "gets all keys", %{cache: cache} do
-      :ok = cache.put("key1", "value1")
-      :ok = cache.put("key2", "value2")
-
-      assert cache.get_all!() |> Enum.sort() == ["key1", "key2"]
-    end
-
-    test "raises an error if the query is not supported", %{cache: cache} do
-      assert_raise ArgumentError, "`get_all` does not support query: {:q, \"invalid\"}", fn ->
-        cache.get_all(query: "invalid")
-      end
-    end
-  end
-
-  describe "stream" do
-    test "streams all keys", %{cache: cache} do
-      :ok = cache.put("key1", "value1")
-      :ok = cache.put("key2", "value2")
-
-      assert cache.stream!() |> Enum.to_list() |> Enum.sort() == ["key1", "key2"]
-    end
-
-    test "raises an error if the query is not supported", %{cache: cache} do
-      assert_raise ArgumentError, ~r"does not support query: {:q, \"invalid\"}", fn ->
-        cache.stream!(query: "invalid") |> Enum.to_list()
-      end
     end
   end
 

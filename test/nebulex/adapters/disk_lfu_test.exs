@@ -46,12 +46,16 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("large_key") == {:ok, large_data}
     end
 
-    test "ok: handles metadata", %{cache: cache} do
+    test "ok: handles return options", %{cache: cache} do
       :ok = cache.put("key", "value", metadata: %{foo: "bar"})
 
       assert cache.fetch("key") == {:ok, "value"}
       assert cache.fetch("key", return: :metadata) == {:ok, %{foo: "bar"}}
       assert cache.fetch("key", return: &{&1, &2}) == {:ok, {"value", %{foo: "bar"}}}
+
+      assert {:ok, path} = cache.fetch("key", return: :path)
+      assert File.exists?(path)
+      assert File.read!(path) == "value"
     end
 
     test "error: returns error for expired key", %{cache: cache} do

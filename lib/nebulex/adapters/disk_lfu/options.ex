@@ -69,7 +69,7 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
   # Read options
   read_opts = [
     return: [
-      type: {:or, [{:in, [:binary, :metadata]}, {:fun, 2}]},
+      type: {:or, [{:in, [:binary, :metadata, :path]}, {:fun, 2}]},
       required: false,
       default: :binary,
       doc: """
@@ -79,6 +79,9 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
 
       - `:binary` - Returns the binary value.
       - `:metadata` - Returns the metadata.
+      - `:path` - Returns the path to the file. Be careful, the file should
+        be only for read-only access. Any change to the file can cause
+        unexpected behavior.
       - `t:Nebulex.Adapters.DiskLFU.return_fn/0` - An anonymous function
         that receives the binary value and the metadata and returns the
         desired value.

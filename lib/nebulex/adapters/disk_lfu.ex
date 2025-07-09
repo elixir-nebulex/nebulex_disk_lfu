@@ -247,7 +247,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   ## Nebulex.Adapter.KV
 
   @impl true
-  def fetch(adapter_meta, key, opts) do
+  def fetch(%{cache_path: cache_path} = adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_read_opts!(opts)
@@ -255,14 +255,14 @@ defmodule Nebulex.Adapters.DiskLFU do
     return = Keyword.fetch!(opts, :return)
 
     result =
-      if return == :metadata do
+      if return in [:metadata, :path] do
         Store.fetch_meta(adapter_meta, key, retries)
       else
         Store.read_from_disk(adapter_meta, key, retries)
       end
 
     with {:ok, _} = ok <- result do
-      handle_return(return, ok)
+      handle_return(return, ok, cache_path)
     end
     |> handle_result(key)
   end
@@ -319,7 +319,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   end
 
   @impl true
-  def take(adapter_meta, key, opts) do
+  def take(%{cache_path: cache_path} = adapter_meta, key, opts) do
     assert_binary(key, "key")
 
     opts = Options.validate_read_opts!(opts)
@@ -327,14 +327,14 @@ defmodule Nebulex.Adapters.DiskLFU do
     return = Keyword.fetch!(opts, :return)
 
     result =
-      if return == :metadata do
+      if return in [:metadata, :path] do
         Store.pop_meta(adapter_meta, key, retries)
       else
         Store.pop_from_disk(adapter_meta, key, retries)
       end
 
     with {:ok, _} = ok <- result do
-      handle_return(return, ok)
+      handle_return(return, ok, cache_path)
     end
     |> handle_result(key)
   end
@@ -516,15 +516,21 @@ defmodule Nebulex.Adapters.DiskLFU do
     other
   end
 
-  defp handle_return(:metadata, {:ok, %Meta{metadata: meta}}) do
-    {:ok, meta}
-  end
-
-  defp handle_return(:binary, {:ok, {binary, _meta}}) do
+  defp handle_return(:binary, {:ok, {binary, _meta}}, _) do
     {:ok, binary}
   end
 
-  defp handle_return(fun, {:ok, {binary, %Meta{metadata: meta}}}) when is_function(fun, 2) do
+  defp handle_return(:metadata, {:ok, %Meta{metadata: meta}}, _) do
+    {:ok, meta}
+  end
+
+  defp handle_return(:path, {:ok, %Meta{key: key}}, cache_path) do
+    path = Path.join([cache_path, hash_key(key) <> ".cache"])
+
+    {:ok, path}
+  end
+
+  defp handle_return(fun, {:ok, {binary, %Meta{metadata: meta}}}, _) when is_function(fun, 2) do
     {:ok, fun.(binary, meta)}
   end
 

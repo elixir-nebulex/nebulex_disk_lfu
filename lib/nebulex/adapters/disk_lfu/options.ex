@@ -7,8 +7,7 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
   start_opts = [
     root_path: [
       type: :string,
-      required: false,
-      default: "cache",
+      required: true,
       doc: """
       The root path to store the cache files.
       """

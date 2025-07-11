@@ -548,4 +548,15 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("another_key") == {:ok, "another_value"}
     end
   end
+
+  describe "required options" do
+    test "error: root_path is required", %{cache: cache} do
+      Process.flag(:trap_exit, true)
+
+      assert {:error, {%NimbleOptions.ValidationError{message: message}, _}} =
+               cache.start_link(name: :test)
+
+      assert message =~ "required :root_path option not found"
+    end
+  end
 end

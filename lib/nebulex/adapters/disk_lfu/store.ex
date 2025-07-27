@@ -583,7 +583,11 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     end
   end
 
-  defp load_cache_metadata(%__MODULE__{cache_path: cache_path, meta_table: meta_table}) do
+  defp load_cache_metadata(%__MODULE__{
+         cache_path: cache_path,
+         meta_table: meta_table,
+         telemetry_prefix: telemetry_prefix
+       }) do
     cache_path
     |> tap(&cleanup_temp_files/1)
     |> Path.join("*.meta")
@@ -593,7 +597,18 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
         {:ok, meta} ->
           [meta | acc]
 
-        _error ->
+        {:error, reason} ->
+          Telemetry.execute(
+            telemetry_prefix ++ [:load_metadata, :error],
+            %{
+              system_time: System.system_time(:millisecond)
+            },
+            %{
+              filename: filename,
+              reason: reason
+            }
+          )
+
           acc
       end
     end)
@@ -838,9 +853,11 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       meta() = meta ->
         {:ok, meta}
 
-      _error ->
-        :error
+      other ->
+        {:error, {:undecodable_metadata, other}}
     end
+  rescue
+    error -> {:error, {:corrupted_metadata, error}}
   end
 
   defp export_meta(

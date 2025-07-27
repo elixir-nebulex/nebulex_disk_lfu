@@ -534,8 +534,9 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("persistent_key", "persistent_value")
       :ok = cache.put("another_key", "another_value")
 
-      # Simulate a corrupted meta file
+      # Simulate a corrupted meta files
       :ok = File.write!(cache.cache_path() <> "/error_key.meta", :erlang.term_to_binary("meta"))
+      :ok = File.write!(cache.cache_path() <> "/exception_key.meta", "invalid")
 
       # Stop the cache
       safe_stop(pid)

@@ -141,6 +141,20 @@ defmodule Nebulex.Adapters.DiskLFU do
           reason: term(),
           stacktrace: [term()]
         }
+        ```
+
+    * `telemetry_prefix ++ [:load_metadata, :error]` - Dispatched by
+      the adapter when the metadata loading fails for a given filename.
+
+      * Measurements: `%{system_time: non_neg_integer()}`
+      * Metadata:
+
+        ```
+        %{
+          filename: String.t(),
+          reason: term()
+        }
+        ```
 
   ## CAVEATS
 

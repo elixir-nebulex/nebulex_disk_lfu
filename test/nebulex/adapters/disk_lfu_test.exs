@@ -53,9 +53,29 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       assert cache.fetch("key", return: :metadata) == {:ok, %{foo: "bar"}}
       assert cache.fetch("key", return: &{&1, &2}) == {:ok, {"value", %{foo: "bar"}}}
 
-      assert {:ok, path} = cache.fetch("key", return: :path)
-      assert File.exists?(path)
-      assert File.read!(path) == "value"
+      assert {:ok, symlink} = cache.fetch("key", return: :symlink)
+      assert File.exists?(symlink)
+      assert File.read!(symlink) == "value"
+    end
+
+    test "ok: handles symlink if already exists", %{cache: cache} do
+      :ok = cache.put("key", "value")
+
+      File
+      |> Mimic.expect(:ln_s, fn _, _ -> {:error, :eexist} end)
+
+      assert {:ok, _symlink} = cache.fetch("key", return: :symlink)
+    end
+
+    test "error: symlink creation fails", %{cache: cache} do
+      :ok = cache.put("key", "value")
+
+      File
+      |> Mimic.expect(:ln_s, fn _, _ -> {:error, :enotsup} end)
+
+      assert_raise Nebulex.Error, "could not fetch key \"key\": operation not supported", fn ->
+        cache.fetch!("key", return: :symlink)
+      end
     end
 
     test "error: returns error for expired key", %{cache: cache} do
@@ -209,7 +229,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       end
     end
 
-    test "ok: handles metadata", %{cache: cache} do
+    test "ok: handles return options", %{cache: cache} do
       :ok = cache.put("bin", "value", metadata: %{foo: "bar"})
       :ok = cache.put("meta", "value", metadata: %{foo: "bar"})
       :ok = cache.put("{bin, meta}", "value", metadata: %{foo: "bar"})

@@ -39,3 +39,5 @@ erl_crash.dump
 /nebulex
 Elixir*
 *.coverdata
+*.cache
+/cache-symlinks

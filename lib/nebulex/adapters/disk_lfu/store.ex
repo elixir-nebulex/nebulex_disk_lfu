@@ -163,7 +163,6 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     path = cache_key_path(cache_path, hash_key)
 
     # Read the binary from disk and update the metadata
-    # TODO: The metadata is persisted to disk asynchronously periodically
     with_meta(
       meta_table,
       counter_ref,

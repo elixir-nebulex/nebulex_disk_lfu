@@ -269,7 +269,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     return = Keyword.fetch!(opts, :return)
 
     result =
-      if return in [:metadata, :path] do
+      if return in [:metadata, :symlink] do
         Store.fetch_meta(adapter_meta, key, retries)
       else
         Store.read_from_disk(adapter_meta, key, retries)
@@ -278,7 +278,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     with {:ok, _} = ok <- result do
       handle_return(return, ok, cache_path)
     end
-    |> handle_result(key)
+    |> handle_result(key, "could not fetch key #{inspect(key)}")
   end
 
   @impl true
@@ -294,7 +294,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     with {:ok, _} <- Store.write_to_disk(adapter_meta, key, value, opts) do
       :ok
     end
-    |> handle_result()
+    |> handle_result(:"$no_ctx", "could not put key #{inspect(key)}")
   end
 
   @impl true
@@ -317,7 +317,7 @@ defmodule Nebulex.Adapters.DiskLFU do
         {:error, _} = error -> {:halt, error}
       end
     end)
-    |> handle_result()
+    |> handle_result(:"$no_ctx", "could not put all keys")
   end
 
   @impl true
@@ -329,7 +329,7 @@ defmodule Nebulex.Adapters.DiskLFU do
 
     adapter_meta
     |> Store.delete_from_disk(key, retries)
-    |> handle_result(key)
+    |> handle_result(key, "could not delete key #{inspect(key)}")
   end
 
   @impl true
@@ -341,7 +341,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     return = Keyword.fetch!(opts, :return)
 
     result =
-      if return in [:metadata, :path] do
+      if return == :metadata do
         Store.pop_meta(adapter_meta, key, retries)
       else
         Store.pop_from_disk(adapter_meta, key, retries)
@@ -350,7 +350,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     with {:ok, _} = ok <- result do
       handle_return(return, ok, cache_path)
     end
-    |> handle_result(key)
+    |> handle_result(key, "could not take key #{inspect(key)}")
   end
 
   @impl true
@@ -361,9 +361,14 @@ defmodule Nebulex.Adapters.DiskLFU do
     retries = Keyword.fetch!(opts, :retries)
 
     case Store.fetch_meta(adapter_meta, key, retries) do
-      {:ok, _} -> {:ok, true}
-      {:error, reason} when reason in [:not_found, :expired] -> {:ok, false}
-      {:error, _} = error -> handle_result(error)
+      {:ok, _} ->
+        {:ok, true}
+
+      {:error, reason} when reason in [:not_found, :expired] ->
+        {:ok, false}
+
+      {:error, _} = error ->
+        handle_result(error, :"$no_ctx", "could not check if key #{inspect(key)} exists")
     end
   end
 
@@ -377,7 +382,7 @@ defmodule Nebulex.Adapters.DiskLFU do
     with {:ok, %Meta{expires_at: expires_at}} <- Store.fetch_meta(adapter_meta, key, retries) do
       {:ok, remaining_ttl(expires_at)}
     end
-    |> handle_result(key)
+    |> handle_result(key, "could not get TTL for key #{inspect(key)}")
   end
 
   @impl true
@@ -393,7 +398,7 @@ defmodule Nebulex.Adapters.DiskLFU do
       retries,
       &%{&1 | expires_at: expires_at(ttl)}
     )
-    |> handle_update_meta()
+    |> handle_update_meta("could not expire key #{inspect(key)}")
   end
 
   @impl true
@@ -405,7 +410,7 @@ defmodule Nebulex.Adapters.DiskLFU do
 
     adapter_meta
     |> Store.update_meta(key, retries, &%{&1 | last_accessed_at: now()})
-    |> handle_update_meta()
+    |> handle_update_meta("could not touch key #{inspect(key)}")
   end
 
   @impl true
@@ -512,21 +517,37 @@ defmodule Nebulex.Adapters.DiskLFU do
 
   ## Private functions
 
-  defp handle_result(result, ctx \\ :"$no_ctx")
+  defp assert_binary(data, arg_name) do
+    unless is_binary(data) do
+      raise ArgumentError, "the #{arg_name} must be a binary, got: #{inspect(data)}"
+    end
+  end
 
-  defp handle_result({:error, reason}, key) when reason in [:not_found, :expired] do
+  defp handle_result(result, ctx, msg)
+
+  defp handle_result({:error, reason}, key, _) when reason in [:not_found, :expired] do
     wrap_error Nebulex.KeyError, key: key, reason: reason
   end
 
-  defp handle_result({:error, :enoent}, key) when key != :"$no_ctx" do
+  defp handle_result({:error, :enoent}, key, _) when key != :"$no_ctx" do
     wrap_error Nebulex.KeyError, key: key, reason: :not_found
   end
 
-  defp handle_result({:error, reason}, _) do
+  @posix_errors ~w(
+    eacces eagain ebadf ebadmsg ebusy edeadlk edeadlock edquot eexist efault
+    efbig eftype eintr einval eio eisdir eloop emfile emlink emultihop
+    enametoolong enfile enobufs enodev enolck enolink enoent enomem enospc
+    enosr enostr enosys enotblk enotdir enotsup enxio eopnotsupp eoverflow
+    eperm epipe erange erofs espipe esrch estale etxtbsy exdev)a
+  defp handle_result({:error, reason}, _, msg) when reason in @posix_errors do
+    wrap_error Nebulex.Error, module: __MODULE__, reason: reason, prefix: msg
+  end
+
+  defp handle_result({:error, reason}, _, _) do
     wrap_error Nebulex.Error, reason: reason
   end
 
-  defp handle_result(other, _) do
+  defp handle_result(other, _, _) do
     other
   end
 
@@ -538,27 +559,48 @@ defmodule Nebulex.Adapters.DiskLFU do
     {:ok, meta}
   end
 
-  defp handle_return(:path, {:ok, %Meta{key: key}}, cache_path) do
-    path = Path.join([cache_path, hash_key(key) <> ".cache"])
+  defp handle_return(:symlink, {:ok, %Meta{key: key}}, cache_path) do
+    # Get the real path for the key
+    hash_key = hash_key(key)
+    real_path = Path.join(cache_path, hash_key <> ".cache")
 
-    {:ok, path}
+    # Symlink path to the current directory
+    temp_path = "cache-symlinks/#{:erlang.phash2(cache_path)}"
+    File.mkdir_p!(temp_path)
+    link_path = Path.join(temp_path, hash_key <> ".cache")
+
+    # Instead of exposing internal paths, create a temporary symlink into
+    # a user-facing directory
+    case File.ln_s(real_path, link_path) do
+      :ok -> {:ok, link_path}
+      {:error, :eexist} -> {:ok, link_path}
+      error -> error
+    end
   end
 
   defp handle_return(fun, {:ok, {binary, %Meta{metadata: meta}}}, _) when is_function(fun, 2) do
     {:ok, fun.(binary, meta)}
   end
 
-  defp handle_update_meta(result) do
+  defp handle_update_meta(result, msg) do
     case result do
       :ok -> {:ok, true}
       {:error, :not_found} -> {:ok, false}
-      {:error, _} = error -> handle_result(error)
+      {:error, _} = error -> handle_result(error, :"$no_ctx", msg)
     end
   end
 
-  defp assert_binary(data, arg_name) do
-    unless is_binary(data) do
-      raise ArgumentError, "the #{arg_name} must be a binary, got: #{inspect(data)}"
-    end
+  ## Error formatting
+
+  @doc false
+  def format_error(reason, metadata) do
+    prefix = Keyword.fetch!(metadata, :prefix)
+
+    formatted =
+      reason
+      |> :file.format_error()
+      |> IO.iodata_to_binary()
+
+    "#{prefix}: #{formatted}"
   end
 end

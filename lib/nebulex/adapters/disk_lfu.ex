@@ -292,7 +292,7 @@ defmodule Nebulex.Adapters.DiskLFU do
       |> Keyword.put(:ttl, ttl)
 
     with {:ok, _} <- Store.write_to_disk(adapter_meta, key, value, opts) do
-      :ok
+      {:ok, true}
     end
     |> handle_result(:"$no_ctx", "could not put key #{inspect(key)}")
   end

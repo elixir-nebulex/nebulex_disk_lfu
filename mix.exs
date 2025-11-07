@@ -41,7 +41,7 @@ defmodule NebulexDiskLFU.MixProject do
 
   defp deps do
     [
-      {:nebulex, "~> 3.0.0-rc.1"},
+      {:nebulex, github: "elixir-nebulex/nebulex", branch: "main"},
       {:nimble_options, "~> 0.5 or ~> 1.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 

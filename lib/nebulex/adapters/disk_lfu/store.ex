@@ -788,7 +788,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   defp select_eviction_victims(meta_table, select_limit) do
     expired_match_spec =
       meta_match_spec(
-        [{:not, {:orelse, {:"=:=", :"$8", :infinity}, {:<, now(), :"$8"}}}],
+        [{:andalso, {:is_integer, :"$8"}, {:>=, now(), :"$8"}}],
         {{:"$5", :"$8", :"$2"}}
       )
 

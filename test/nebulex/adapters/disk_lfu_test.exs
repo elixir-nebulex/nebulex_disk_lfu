@@ -390,6 +390,16 @@ defmodule Nebulex.Adapters.DiskLFUTest do
     end
   end
 
+  describe "fetch_or_store" do
+    test "ok: stores the value in the cache if the key does not exist", %{cache: cache} do
+      assert cache.fetch_or_store("lazy", fn -> {:ok, "value"} end) == {:ok, "value"}
+      assert cache.get!("lazy") == "value"
+
+      assert cache.fetch_or_store("lazy", fn -> {:ok, "new value"} end) == {:ok, "value"}
+      assert cache.get!("lazy") == "value"
+    end
+  end
+
   describe "count_all" do
     test "ok: counts all entries", %{cache: cache} do
       :ok = cache.put("key1", "value1")

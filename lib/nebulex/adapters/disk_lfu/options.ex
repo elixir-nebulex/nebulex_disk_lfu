@@ -9,7 +9,10 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       type: :string,
       required: true,
       doc: """
-      The root path to store the cache files.
+      The root directory where cache files are stored.
+
+      Cache files (`.cache` and `.meta` files) are created as direct children
+      of this directory. This directory will be created if it does not exist.
       """
     ],
     max_bytes: [
@@ -17,10 +20,9 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: nil,
       doc: """
-      The maximum number of bytes to store in the cache.
+      The maximum cache size in bytes. When exceeded, LFU eviction is triggered.
 
-      If not provided, the cache will not evict entries based on the total
-      size of the cache (default).
+      When `nil` (default), the cache has no size-based eviction limit.
       """
     ],
     eviction_victim_limit: [
@@ -28,7 +30,10 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: 100,
       doc: """
-      The maximum number of eviction victims to delete.
+      The maximum number of entries to evict in a single operation.
+
+      When size limit is exceeded, eviction selects up to this many entries
+      (victims) to delete based on the LFU strategy.
       """
     ],
     eviction_victim_sample_size: [
@@ -36,10 +41,12 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: 1000,
       doc: """
-      The size of the sample to select the eviction victims from. After the
-      sample is selected, the victims are sorted by the access count and the
-      last accessed time. Then, the first victims given by
-      `:eviction_victim_limit` are evicted.
+      The number of candidate entries to sample when selecting victims.
+
+      A larger sample size provides better eviction decisions (more accurate LFU)
+      but requires more scanning. The sampled entries are then sorted by
+      frequency and age, and the worst `:eviction_victim_limit` entries are
+      removed.
       """
     ],
     metadata_persistence_timeout: [
@@ -47,8 +54,31 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: :timer.minutes(1),
       doc: """
-      The timeout in milliseconds to persist the metadata to disk.
-      When `nil`, the metadata is not persisted to disk.
+      The interval in milliseconds at which to persist metadata to disk.
+
+      Metadata is updated in memory for performance, then periodically written
+      to disk at this interval to minimize I/O overhead. When `nil`, metadata
+      is not persisted automatically (only on shutdown).
+      """
+    ],
+    eviction_timeout: [
+      type: {:or, [:timeout, nil]},
+      required: false,
+      default: nil,
+      doc: """
+      The interval in milliseconds to evict expired entries periodically.
+
+      When set, a background timer triggers automatic cleanup of all expired
+      entries at the specified interval. When `nil` (default), expired entries
+      are removed lazily (on access) or manually via `delete_all(query: :expired)`.
+
+      **Example:**
+
+      ```elixir
+      config :my_app, MyApp.Cache,
+        root_path: "/tmp/my_cache",
+        eviction_timeout: :timer.minutes(5)
+      ```
       """
     ]
   ]
@@ -60,7 +90,10 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: :infinity,
       doc: """
-      The number of times to retry a command if it fails because of a lock.
+      The number of times to retry an operation if it fails due to contention.
+
+      Retries occur when concurrent operations lock the same key or resource.
+      Set to `:infinity` to retry indefinitely (default).
       """
     ]
   ]
@@ -72,19 +105,17 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: :binary,
       doc: """
-      The return value of the fetch operation.
+      The value to return from read operations (`fetch`, `get`, `take`).
 
-      The following values are supported:
+      Supported values:
 
-      - `:binary` - Returns the binary value.
-      - `:metadata` - Returns the metadata.
-      - `:symlink` - Returns a temporary symlink to the file. Be careful,
-        the file should be only for read-only access. Any change to the file
-        can cause unexpected behavior. This option is only supported for the
-        operations: `fetch` and `get`
-      - `t:Nebulex.Adapters.DiskLFU.return_fn/0` - An anonymous function
-        that receives the binary value and the metadata and returns the
-        desired value.
+      - `:binary` (default) - Returns the cache value as a binary.
+      - `:metadata` - Returns the entry metadata instead of the value.
+      - `:symlink` - Returns a temporary read-only symlink to the file.
+        **Only supported for `fetch` and `get` operations.** Modifying the file
+        can cause unexpected behavior.
+      - A function/2 - A callback receiving `(binary, metadata)` that transforms
+        and returns a custom value.
 
       """
     ]
@@ -97,7 +128,10 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: %{},
       doc: """
-      The metadata to store with the value.
+      Custom metadata to attach to the cached entry.
+
+      This data is stored alongside the value and can be retrieved using
+      the `return: :metadata` option on read operations.
       """
     ]
   ]

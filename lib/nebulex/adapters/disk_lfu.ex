@@ -4,7 +4,8 @@ defmodule Nebulex.Adapters.DiskLFU do
   **persistent LFU (Least Frequently Used) cache adapter** for
   [Nebulex](https://hexdocs.pm/nebulex), designed to provide an SSD-backed
   cache with disk persistence, TTL support, and LFU-based eviction.
-  his adapter is ideal for workloads that require:
+
+  This adapter is ideal for workloads that require:
 
   - High-capacity caching without exhausting memory.
   - File-based persistence with cache recovery after restarts.
@@ -50,139 +51,223 @@ defmodule Nebulex.Adapters.DiskLFU do
 
   ## Adapter-specific telemetry events
 
-  This adapter exposes following Telemetry events:
+  This adapter exposes the following Telemetry events grouped by category:
 
-    * `telemetry_prefix ++ [:eviction, :start]` - Dispatched by the
-      adapter when the eviction process is started.
+  ### Eviction Events
 
-      * Measurements: `%{system_time: non_neg_integer()}`
-      * Metadata:
+  * `telemetry_prefix ++ [:eviction, :start]` - Dispatched when eviction begins.
 
-        ```
-        %{
-          stored_bytes: non_neg_integer(),
-          max_bytes: non_neg_integer(),
-          victim_sample_size: non_neg_integer(),
-          victim_limit: non_neg_integer()
-        }
-        ```
+    * Measurements: `%{system_time: non_neg_integer()}`
+    * Metadata:
 
-    * `telemetry_prefix ++ [:eviction, :stop]` - Dispatched by the
-      adapter when the eviction process is stopped.
+      ```
+      %{
+        stored_bytes: non_neg_integer(),
+        max_bytes: non_neg_integer(),
+        victim_sample_size: non_neg_integer(),
+        victim_limit: non_neg_integer()
+      }
+      ```
 
-      * Measurements: `%{duration: non_neg_integer()}`
-      * Metadata:
+  * `telemetry_prefix ++ [:eviction, :stop]` - Dispatched when eviction completes.
 
-        ```
-        %{
-          stored_bytes: non_neg_integer(),
-          max_bytes: non_neg_integer(),
-          victim_sample_size: non_neg_integer(),
-          victim_limit: non_neg_integer(),
-          result: term()
-        }
-        ```
+    * Measurements: `%{duration: non_neg_integer()}`
+    * Metadata:
 
-    * `telemetry_prefix ++ [:eviction, :exception]` - Dispatched by
-      the adapter when the eviction process fails due to an exception.
+      ```
+      %{
+        stored_bytes: non_neg_integer(),
+        max_bytes: non_neg_integer(),
+        victim_sample_size: non_neg_integer(),
+        victim_limit: non_neg_integer(),
+        result: term()
+      }
+      ```
 
-      * Measurements: `%{duration: non_neg_integer()}`
-      * Metadata:
+  * `telemetry_prefix ++ [:eviction, :exception]` - Dispatched when eviction fails.
 
-        ```
-        %{
-          stored_bytes: non_neg_integer(),
-          max_bytes: non_neg_integer(),
-          victim_sample_size: non_neg_integer(),
-          victim_limit: non_neg_integer(),
-          kind: :error | :exit | :throw,
-          reason: term(),
-          stacktrace: [term()]
-        }
-        ```
+    * Measurements: `%{duration: non_neg_integer()}`
+    * Metadata:
 
-    * `telemetry_prefix ++ [:persist_meta, :start]` - Dispatched by
-      the adapter when the metadata persistence process is started.
+      ```
+      %{
+        stored_bytes: non_neg_integer(),
+        max_bytes: non_neg_integer(),
+        victim_sample_size: non_neg_integer(),
+        victim_limit: non_neg_integer(),
+        kind: :error | :exit | :throw,
+        reason: term(),
+        stacktrace: [term()]
+      }
+      ```
 
-      * Measurements: `%{system_time: non_neg_integer()}`
-      * Metadata:
+  ### Expired Entry Eviction Events
 
-        ```
-        %{
-          store_pid: pid()
-        }
-        ```
+  * `telemetry_prefix ++ [:evict_expired_entries, :start]` - Dispatched when
+    the periodic background timer begins evicting expired entries.
 
-    * `telemetry_prefix ++ [:persist_meta, :stop]` - Dispatched by
-      the adapter when the metadata persistence process is stopped.
+    * Measurements: `%{system_time: non_neg_integer()}`
+    * Metadata:
 
-      * Measurements: `%{system_time: non_neg_integer()}`
-      * Metadata:
+      ```
+      %{
+        store_pid: pid()
+      }
+      ```
 
-        ```
-        %{
-          store_pid: pid(),
-          count: non_neg_integer()
-        }
-        ```
+  * `telemetry_prefix ++ [:evict_expired_entries, :stop]` - Dispatched when
+    expired entry eviction completes.
 
-    * `telemetry_prefix ++ [:persist_meta, :exception]` - Dispatched by
-      the adapter when the metadata persistence process fails due to an
-      exception.
+    * Measurements: `%{duration: non_neg_integer()}`
+    * Metadata:
 
-      * Measurements: `%{duration: non_neg_integer()}`
-      * Metadata:
+      ```
+      %{
+        store_pid: pid(),
+        count: non_neg_integer()
+      }
+      ```
 
-        ```
-        %{
-          store_pid: pid(),
-          count: non_neg_integer(),
-          kind: :error | :exit | :throw,
-          reason: term(),
-          stacktrace: [term()]
-        }
-        ```
+  * `telemetry_prefix ++ [:evict_expired_entries, :exception]` - Dispatched when
+    expired entry eviction fails.
 
-    * `telemetry_prefix ++ [:load_metadata, :error]` - Dispatched by
-      the adapter when the metadata loading fails for a given filename.
+    * Measurements: `%{duration: non_neg_integer()}`
+    * Metadata:
 
-      * Measurements: `%{system_time: non_neg_integer()}`
-      * Metadata:
+      ```
+      %{
+        store_pid: pid(),
+        kind: :error | :exit | :throw,
+        reason: term(),
+        stacktrace: [term()]
+      }
+      ```
 
-        ```
-        %{
-          filename: String.t(),
-          reason: term()
-        }
-        ```
+  ### Metadata Persistence Events
+
+  * `telemetry_prefix ++ [:persist_meta, :start]` - Dispatched when metadata
+    persistence begins.
+
+    * Measurements: `%{system_time: non_neg_integer()}`
+    * Metadata:
+
+      ```
+      %{
+        store_pid: pid()
+      }
+      ```
+
+  * `telemetry_prefix ++ [:persist_meta, :stop]` - Dispatched when metadata
+    persistence completes.
+
+    * Measurements: `%{system_time: non_neg_integer()}`
+    * Metadata:
+
+      ```
+      %{
+        store_pid: pid(),
+        count: non_neg_integer()
+      }
+      ```
+
+  * `telemetry_prefix ++ [:persist_meta, :exception]` - Dispatched when metadata
+    persistence fails.
+
+    * Measurements: `%{duration: non_neg_integer()}`
+    * Metadata:
+
+      ```
+      %{
+        store_pid: pid(),
+        count: non_neg_integer(),
+        kind: :error | :exit | :throw,
+        reason: term(),
+        stacktrace: [term()]
+      }
+      ```
+
+  ### Metadata Loading Events
+
+  * `telemetry_prefix ++ [:load_metadata, :error]` - Dispatched when metadata
+    loading fails for a file.
+
+    * Measurements: `%{system_time: non_neg_integer()}`
+    * Metadata:
+
+      ```
+      %{
+        filename: String.t(),
+        reason: term()
+      }
+      ```
+
+  ## Queryable API
+
+  This adapter supports the `Nebulex.Adapter.Queryable` behavior with a limited
+  query interface. The following query options are available for queryable
+  operations like `delete_all/2`, `count_all/2`, and `get_all/2`:
+
+  ### Query Option: Match All Keys
+
+  Delete, count, or retrieve all keys in the cache:
+
+  ```elixir
+  MyCache.delete_all()
+  MyCache.count_all()
+  MyCache.get_all()
+  ```
+
+  ### Query Option: Match Specific Keys
+
+  Delete, count, or retrieve specific keys using the `in` operator:
+
+  ```elixir
+  MyCache.delete_all(in: [:key1, :key2, :key3])
+  MyCache.count_all(in: [:key1, :key2])
+  MyCache.get_all(in: [:key1, :key2, :key3])
+  ```
+
+  ### Query Option: Match Expired Entries
+
+  Delete expired entries using `query: :expired`:
+
+  ```elixir
+  MyCache.delete_all(query: :expired)
+  ```
+
+  This query matches all entries whose TTL (`expires_at`) is less than or equal
+  to the current time. It is only supported for `delete_all/2` and is
+  particularly useful for proactive cleanup of stale entries, either manually
+  via the API or automatically by configuring the `:eviction_timeout` option
+  at startup.
+
+  For more information about automatic eviction, see the
+  [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html) guide.
 
   ## CAVEATS
 
-  - The adapter does not support `incr` and `decr` operations.
-  - The adapter does not support `put_new`, `replace`, and `put_new_all`
-    operations; they all work as `put` operations. However, it is planned to
-    support them in the future.
-  - The `count_all` only supports counting all keys in the cache (e.g.,
-    `MyCache.count_all()`), and counting the given keys (e.g.,
-    `MyCache.count_all([:k1, :k2])`). However, this operation is not atomic.
-    If an error occurs while counting, it is skipped and the count may be
-    inaccurate.
-  - The `delete_all` only supports deleting all keys in the cache (e.g.,
-    `MyCache.delete_all()`), and deleting the given keys (e.g.,
-    `MyCache.delete_all([:k1, :k2])`). However, this operation is not atomic.
-    If an error occurs while deleting, it is skipped and the deletion may be
-    incomplete.
-  - The `get_all` only supports getting all keys in the cache (e.g.,
-    `MyCache.get_all()`), and getting the given keys (e.g.,
-    `MyCache.get_all([:k1, :k2])`).
-  - The `stream` only supports streaming all keys in the cache (e.g.,
-    `MyCache.stream()`), and streaming the given keys (e.g.,
-    `MyCache.stream([:k1, :k2])`).
-  - Any write or delete operation (e.g., `put`, `put_all`, `delete`, `take`)
-    is blocking and is performed atomically (on the given key or keys). This
-    is done to make the adapter more robust, ensuring consistency, and avoiding
+  ### Unsupported Operations
+
+  - `incr/3` and `decr/3` are not supported.
+  - `put_new/3`, `replace/3`, and `put_new_all/2` are not supported. They work
+    as `put` operations instead. Support is planned for a future release.
+
+  ### Query Operation Limitations
+
+  - `count_all/1` supports counting all keys or given keys, but is **not atomic**.
+    Errors are skipped and the count may be inaccurate.
+  - `delete_all/1` supports deleting all keys, given keys, or expired entries
+    (`query: :expired`), but is **not atomic**. Errors are skipped and deletion
+    may be incomplete.
+  - `get_all/1` supports retrieving all keys or given keys only.
+  - `stream/1` supports streaming all keys or given keys only.
+
+  ### Performance Characteristics
+
+  - Write and delete operations (`put`, `put_all`, `delete`, `take`) are
+    **blocking and atomic per key**. This ensures consistency and prevents
     race conditions or write conflicts.
-  - A read operation may be blocking if the key is expired and has to be removed
+  - Read operations may block briefly if a key is expired and requires cleanup
     from the cache.
 
   """
@@ -245,7 +330,8 @@ defmodule Nebulex.Adapters.DiskLFU do
       max_bytes: Keyword.fetch!(opts, :max_bytes),
       eviction_victim_sample_size: Keyword.fetch!(opts, :eviction_victim_sample_size),
       eviction_victim_limit: Keyword.fetch!(opts, :eviction_victim_limit),
-      metadata_persistence_timeout: Keyword.fetch!(opts, :metadata_persistence_timeout)
+      metadata_persistence_timeout: Keyword.fetch!(opts, :metadata_persistence_timeout),
+      eviction_timeout: Keyword.fetch!(opts, :eviction_timeout)
     }
 
     # Create the child spec for the store
@@ -452,9 +538,19 @@ defmodule Nebulex.Adapters.DiskLFU do
   def execute(
         %{meta_table: meta_table, cache_path: cache_path},
         %{op: :delete_all, query: {:q, nil}},
-        _opts
+        opts
       ) do
-    {:ok, Store.delete_all_from_disk(meta_table, cache_path)}
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    {:ok, Store.delete_all_from_disk(meta_table, cache_path, retries)}
+  end
+
+  def execute(adapter_meta, %{op: :delete_all, query: {:q, :expired}}, opts) do
+    opts = Options.validate_common_runtime_opts!(opts)
+    retries = Keyword.fetch!(opts, :retries)
+
+    {:ok, Store.delete_expired_entries_from_disk(adapter_meta, retries)}
   end
 
   def execute(

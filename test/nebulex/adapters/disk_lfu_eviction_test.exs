@@ -29,15 +29,14 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
     @events [@start, @stop]
 
     setup %{dir: dir} do
-      {:ok, pid} =
-        DiskCache.start_link(
-          root_path: dir,
-          max_bytes: 20,
-          eviction_victim_limit: 2,
-          metadata_persistence_timeout: nil
+      pid =
+        start_supervised!(
+          {DiskCache,
+           root_path: dir,
+           max_bytes: 20,
+           eviction_victim_limit: 2,
+           metadata_persistence_timeout: nil}
         )
-
-      on_exit(fn -> safe_stop(pid) end)
 
       {:ok, pid: pid}
     end
@@ -117,14 +116,7 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
 
   describe "eviction corner cases" do
     setup %{dir: dir} do
-      {:ok, pid} =
-        DiskCache.start_link(
-          root_path: dir,
-          max_bytes: 20,
-          eviction_victim_limit: 2
-        )
-
-      on_exit(fn -> safe_stop(pid) end)
+      pid = start_supervised!({DiskCache, root_path: dir, max_bytes: 20, eviction_victim_limit: 2})
 
       {:ok, pid: pid}
     end
@@ -246,6 +238,38 @@ defmodule Nebulex.Adapters.DiskLFUEvictionTest do
 
         # Stop the cache
         :ok = cache.stop()
+      end
+    end
+  end
+
+  describe "eviction timeout" do
+    @start @telemetry_prefix ++ [:evict_expired_entries, :start]
+    @stop @telemetry_prefix ++ [:evict_expired_entries, :stop]
+    @events [@start, @stop]
+
+    setup %{dir: dir} do
+      pid = start_supervised!({DiskCache, root_path: dir, eviction_timeout: 100})
+
+      {:ok, pid: pid}
+    end
+
+    test "1: expired entries are evicted", %{cache: cache} do
+      with_telemetry_handler @events, fn ->
+        :ok = cache.put("key1", "12345", ttl: 50)
+        :ok = cache.put("key2", "12345", ttl: 60)
+        :ok = cache.put("key3", "12345", ttl: 200)
+
+        assert cache.get_all!() |> Enum.sort() == ["key1", "key2", "key3"]
+
+        assert_receive {@start, %{}, %{count: 0}}, 1000
+        assert_receive {@stop, %{}, %{count: 2}}, 1000
+
+        assert cache.get_all!() |> Enum.sort() == ["key3"]
+
+        assert_receive {@start, %{}, %{count: 0}}, 1000
+        assert_receive {@stop, %{}, %{count: 1}}, 1000
+
+        assert cache.get_all!() == []
       end
     end
   end

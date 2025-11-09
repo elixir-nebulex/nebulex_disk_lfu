@@ -81,6 +81,48 @@ Eviction is incremental:
 Eviction and counter updates are wrapped in `:global.trans/4` to ensure
 serialization under concurrency.
 
+### Periodic Expiration Cleanup
+
+In addition to the eager eviction mechanism triggered by size constraints, the
+adapter supports **proactive background cleanup** of expired entries using the
+`:eviction_timeout` option.
+
+When `:eviction_timeout` is configured at startup, the Store process starts a
+background timer that periodically runs and removes all expired entries from the
+cache without requiring explicit API calls. This is useful for applications that
+want to keep the cache clean without implementing their own background job.
+
+**Configuration Example:**
+
+```elixir
+config :my_app, MyApp.Cache,
+  root_path: "/tmp/my_cache",
+  eviction_timeout: :timer.minutes(5)  # Clean expired entries every 5 minutes
+```
+
+**How It Works:**
+
+1. The timer is set during Store initialization.
+2. At each interval, a `:evict_expired_entries` message is sent to the Store
+   process.
+3. The Store locates all entries where `expires_at <= now()`.
+4. Expired entries are removed from disk and their metadata is updated.
+5. The cache size counter is decremented accordingly.
+6. The timer is reset for the next interval.
+7. The entire operation is wrapped in a telemetry span for observability.
+
+**Alternative: Manual Cleanup**
+
+If you prefer not to use background cleanup, you can manually evict expired
+entries at any time using the queryable API:
+
+```elixir
+MyCache.delete_all(query: :expired)
+```
+
+This allows for more control over when cleanup occurs, such as during
+low-traffic periods.
+
 ---
 
 ## TTL Expiration

@@ -2,24 +2,15 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   use ExUnit.Case, async: true
   use Mimic
 
-  import Nebulex.Adapters.DiskLFU.TestUtils
-
   defmodule DiskCache do
     use Nebulex.Cache,
       otp_app: :nebulex_disk_lfu,
       adapter: Nebulex.Adapters.DiskLFU
   end
 
-  setup do
-    dir = Briefly.create!(type: :directory)
-    {:ok, pid} = DiskCache.start_link(root_path: dir)
-
-    on_exit(fn -> safe_stop(pid) end)
-
-    {:ok, cache: DiskCache, dir: dir, pid: pid}
-  end
-
   describe "fetch" do
+    setup :setup_cache
+
     test "ok: fetches a value from the cache", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -97,6 +88,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "put" do
+    setup :setup_cache
+
     test "ok: puts a value in the cache", %{cache: cache} do
       assert cache.put("key", "value") == :ok
       assert cache.fetch("key") == {:ok, "value"}
@@ -141,6 +134,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "put_all" do
+    setup :setup_cache
+
     test "ok: puts multiple entries at once", %{cache: cache} do
       entries = [{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}]
 
@@ -187,6 +182,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "delete" do
+    setup :setup_cache
+
     test "ok: deletes an existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -219,6 +216,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "take" do
+    setup :setup_cache
+
     test "ok: takes a value and removes it from cache", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -266,6 +265,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "has_key?" do
+    setup :setup_cache
+
     test "ok: returns true for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -299,6 +300,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "ttl" do
+    setup :setup_cache
+
     test "ok: returns infinity for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -320,6 +323,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "expire" do
+    setup :setup_cache
+
     test "ok: returns true for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -354,6 +359,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "touch" do
+    setup :setup_cache
+
     test "ok: returns true for existing key", %{cache: cache} do
       :ok = cache.put("key", "value")
 
@@ -385,12 +392,16 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "incr" do
+    setup :setup_cache
+
     test "error: raises an error", %{cache: cache} do
       assert {:error, %Nebulex.Error{reason: :not_supported}} = cache.incr("key")
     end
   end
 
   describe "fetch_or_store" do
+    setup :setup_cache
+
     test "ok: stores the value in the cache if the key does not exist", %{cache: cache} do
       assert cache.fetch_or_store("lazy", fn -> {:ok, "value"} end) == {:ok, "value"}
       assert cache.get!("lazy") == "value"
@@ -401,6 +412,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "count_all" do
+    setup :setup_cache
+
     test "ok: counts all entries", %{cache: cache} do
       :ok = cache.put("key1", "value1")
       :ok = cache.put("key2", "value2")
@@ -419,6 +432,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "delete_all" do
+    setup :setup_cache
+
     test "ok: deletes all entries", %{cache: cache} do
       :ok = cache.put("key1", "value1")
       :ok = cache.put("key2", "value2")
@@ -434,6 +449,20 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key2", "value2")
 
       assert cache.delete_all(in: ["key1", "key2"]) == {:ok, 2}
+    end
+
+    test "ok: deletes all expired entries", %{cache: cache} do
+      :ok = cache.put("key1", "value1", ttl: 1)
+      :ok = cache.put("key2", "value2", ttl: 1)
+      :ok = cache.put("key3", "value3", ttl: :timer.seconds(10))
+
+      :ok = Process.sleep(10)
+
+      assert cache.delete_all!(query: :expired) == 2
+
+      refute cache.get!("key1")
+      refute cache.get!("key2")
+      assert cache.get!("key3") == "value3"
     end
 
     test "error: delete given keys fails", %{cache: cache} do
@@ -453,6 +482,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "get_all" do
+    setup :setup_cache
+
     test "ok: gets all keys", %{cache: cache} do
       :ok = cache.put("key1", "value1")
       :ok = cache.put("key2", "value2")
@@ -477,6 +508,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "stream" do
+    setup :setup_cache
+
     test "ok: streams all keys", %{cache: cache} do
       :ok = cache.put("key1", "value1")
       :ok = cache.put("key2", "value2")
@@ -505,6 +538,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "transaction" do
+    setup :setup_cache
+
     test "ok: succeeds with default keys", %{cache: cache} do
       assert cache.transaction(fn ->
                cache.put("key", "value")
@@ -526,6 +561,8 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "concurrent operations" do
+    setup :setup_cache
+
     test "handles concurrent puts", %{cache: cache} do
       tasks =
         for i <- 1..10 do
@@ -560,34 +597,51 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   end
 
   describe "data persistence" do
-    test "data persists across cache restarts", %{cache: cache, dir: dir, pid: pid} do
-      :ok = cache.put("persistent_key", "persistent_value")
-      :ok = cache.put("another_key", "another_value")
+    test "data persists across cache restarts" do
+      dir = Briefly.create!(type: :directory)
+      {:ok, _pid} = DiskCache.start_link(root_path: dir)
+
+      :ok = DiskCache.put("persistent_key", "persistent_value")
+      :ok = DiskCache.put("another_key", "another_value")
 
       # Simulate a corrupted meta files
-      :ok = File.write!(cache.cache_path() <> "/error_key.meta", :erlang.term_to_binary("meta"))
-      :ok = File.write!(cache.cache_path() <> "/exception_key.meta", "invalid")
+      :ok = File.write!(DiskCache.cache_path() <> "/error_key.meta", :erlang.term_to_binary("meta"))
+      :ok = File.write!(DiskCache.cache_path() <> "/exception_key.meta", "invalid")
 
       # Stop the cache
-      safe_stop(pid)
+      :ok = DiskCache.stop()
 
       # Restart the cache with the same directory
       {:ok, _pid} = DiskCache.start_link(root_path: dir)
 
       # Verify data is still there
-      assert cache.fetch("persistent_key") == {:ok, "persistent_value"}
-      assert cache.fetch("another_key") == {:ok, "another_value"}
+      assert DiskCache.fetch("persistent_key") == {:ok, "persistent_value"}
+      assert DiskCache.fetch("another_key") == {:ok, "another_value"}
     end
   end
 
   describe "required options" do
-    test "error: root_path is required", %{cache: cache} do
+    test "error: root_path is required" do
       Process.flag(:trap_exit, true)
 
       assert {:error, {%NimbleOptions.ValidationError{message: message}, _}} =
-               cache.start_link(name: :test)
+               DiskCache.start_link(name: :test)
 
       assert message =~ "required :root_path option not found"
     end
+  end
+
+  ## Private functions
+
+  defp setup_cache(_) do
+    {pid, dir} = start_cache()
+
+    {:ok, cache: DiskCache, dir: dir, pid: pid}
+  end
+
+  defp start_cache do
+    dir = Briefly.create!(type: :directory)
+
+    {start_supervised!({DiskCache, root_path: dir}), dir}
   end
 end

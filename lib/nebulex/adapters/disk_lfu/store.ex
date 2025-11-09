@@ -55,12 +55,18 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   defstruct cache_name: nil,
             cache_path: nil,
             meta_table: nil,
+            bytes_counter: nil,
             meta_sync_timeout: nil,
             meta_sync_timer_ref: nil,
+            eviction_timeout: nil,
+            eviction_timer_ref: nil,
             telemetry_prefix: nil
 
   # Default lock retries
   @default_lock_retries 10
+
+  # Default select limit
+  @default_select_limit 100
 
   ## API
 
@@ -349,18 +355,35 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   @doc """
   Deletes all the entries from disk.
   """
-  @spec delete_all_from_disk(atom(), String.t()) :: non_neg_integer()
-  def delete_all_from_disk(meta_table, cache_path) do
+  @spec delete_all_from_disk(atom(), String.t(), timeout()) :: non_neg_integer()
+  def delete_all_from_disk(meta_table, cache_path, retries) do
     # Fix the meta table
-    _ignore = :ets.safe_fixtable(meta_table, true)
+    :ets.safe_fixtable(meta_table, true)
 
     # Cleanup all the entries in the meta table
-    count = cleanup_all(meta_table, cache_path, :ets.first(meta_table))
+    count = cleanup_all(meta_table, cache_path, :ets.first(meta_table), retries)
 
     # Unfix the meta table
-    _ignore = :ets.safe_fixtable(meta_table, false)
+    :ets.safe_fixtable(meta_table, false)
 
     count
+  end
+
+  @doc """
+  Deletes all the expired entries from disk.
+  """
+  @spec delete_expired_entries_from_disk(adapter_meta(), timeout()) :: non_neg_integer()
+  def delete_expired_entries_from_disk(
+        %{
+          telemetry_prefix: telemetry_prefix,
+          meta_table: meta_table,
+          cache_path: cache_path,
+          bytes_counter: counter_ref
+        },
+        retries
+      ) do
+    # Cleanup all the expired entries in the meta table
+    remove_expired_entries(telemetry_prefix, meta_table, cache_path, counter_ref, retries)
   end
 
   @doc """
@@ -402,7 +425,9 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   def init(%{
         name: cache_name,
         cache_path: cache_path,
+        bytes_counter: counter_ref,
         metadata_persistence_timeout: meta_sync_timeout,
+        eviction_timeout: eviction_timeout,
         telemetry_prefix: telemetry_prefix
       }) do
     # Trap exits to handle crashes
@@ -419,7 +444,9 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       cache_name: cache_name,
       cache_path: cache_path,
       meta_table: meta_table,
+      bytes_counter: counter_ref,
       meta_sync_timeout: meta_sync_timeout,
+      eviction_timeout: eviction_timeout,
       telemetry_prefix: telemetry_prefix
     }
 
@@ -431,11 +458,18 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   end
 
   @impl true
-  def handle_continue(:init, %__MODULE__{meta_sync_timeout: meta_sync_timeout} = state) do
+  def handle_continue(
+        :init,
+        %__MODULE__{meta_sync_timeout: meta_sync_timeout, eviction_timeout: eviction_timeout} =
+          state
+      ) do
     # Reset the metadata sync timer
     meta_sync_ref = reset_timer(meta_sync_timeout)
 
-    {:noreply, %{state | meta_sync_timer_ref: meta_sync_ref}}
+    # Reset the eviction timer
+    eviction_ref = reset_timer(eviction_timeout, nil, :evict_expired_entries)
+
+    {:noreply, %{state | meta_sync_timer_ref: meta_sync_ref, eviction_timer_ref: eviction_ref}}
   end
 
   @impl true
@@ -459,6 +493,33 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
     # Return the state
     {:noreply, %{state | meta_sync_timer_ref: meta_sync_ref}}
+  end
+
+  def handle_info(
+        :evict_expired_entries,
+        %__MODULE__{
+          meta_table: meta_table,
+          cache_path: cache_path,
+          bytes_counter: counter_ref,
+          eviction_timeout: eviction_timeout,
+          eviction_timer_ref: eviction_ref,
+          telemetry_prefix: telemetry_prefix
+        } = state
+      ) do
+    # Evict the expired entries
+    remove_expired_entries(
+      telemetry_prefix,
+      meta_table,
+      cache_path,
+      counter_ref,
+      @default_lock_retries
+    )
+
+    # Reset the eviction timer
+    eviction_ref = reset_timer(eviction_timeout, eviction_ref, :evict_expired_entries)
+
+    # Return the state
+    {:noreply, %{state | eviction_timer_ref: eviction_ref}}
   end
 
   @impl true
@@ -666,22 +727,22 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     Process.delete({:lock, base_path})
   end
 
-  defp cleanup_all(meta_table, cache_path, hash_key) do
-    cleanup_all(meta_table, cache_path, hash_key, 0)
+  defp cleanup_all(meta_table, cache_path, hash_key, retries) do
+    cleanup_all(meta_table, cache_path, hash_key, retries, 0)
   end
 
-  defp cleanup_all(_meta_table, _cache_path, :"$end_of_table", count) do
+  defp cleanup_all(_meta_table, _cache_path, :"$end_of_table", _retries, count) do
     count
   end
 
-  defp cleanup_all(meta_table, cache_path, hash_key, count) do
-    with_lock(hash_key, @default_lock_retries, fn ->
+  defp cleanup_all(meta_table, cache_path, hash_key, retries, count) do
+    with_lock(hash_key, retries, fn ->
       path = cache_key_path(cache_path, hash_key)
 
       safe_remove(meta_table, hash_key, path)
     end)
 
-    cleanup_all(meta_table, cache_path, :ets.next(meta_table, hash_key), count + 1)
+    cleanup_all(meta_table, cache_path, :ets.next(meta_table, hash_key), retries, count + 1)
   end
 
   defp get_current_size_bytes(meta_table, key) do
@@ -788,7 +849,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   defp select_eviction_victims(meta_table, select_limit) do
     expired_match_spec =
       meta_match_spec(
-        [{:andalso, {:is_integer, :"$8"}, {:>=, now(), :"$8"}}],
+        [{:andalso, {:is_integer, :"$8"}, {:"=<", :"$8", now()}}],
         {{:"$5", :"$8", :"$2"}}
       )
 
@@ -807,6 +868,83 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
             # coveralls-ignore-stop
         end
     end
+  end
+
+  defp remove_expired_entries(telemetry_prefix, meta_table, cache_path, counter, retries) do
+    # Fix the meta table
+    :ets.safe_fixtable(meta_table, true)
+
+    # Define the telemetry metadata
+    telemetry_metadata = %{
+      store_pid: self(),
+      count: 0
+    }
+
+    # Wrap the persist function in a telemetry span
+    Telemetry.span(telemetry_prefix ++ [:evict_expired_entries], telemetry_metadata, fn ->
+      # Define the match spec for the expired entries
+      match_spec =
+        meta_match_spec(
+          [{:andalso, {:is_integer, :"$8"}, {:"=<", :"$8", now()}}],
+          {{:"$1", :"$4"}}
+        )
+
+      # Evict the expired entries
+      count =
+        meta_table
+        |> :ets.select(match_spec, @default_select_limit)
+        |> remove_expired_entries(meta_table, match_spec, cache_path, counter, retries, 0)
+
+      # Update the telemetry metadata with the count
+      {count, %{telemetry_metadata | count: count}}
+    end)
+  after
+    # Unfix the meta table
+    :ets.safe_fixtable(meta_table, false)
+  end
+
+  defp remove_expired_entries(:"$end_of_table", _meta_table, _, _, _, _, acc) do
+    acc
+  end
+
+  defp remove_expired_entries(
+         {victims, cont},
+         meta_table,
+         match_spec,
+         cache_path,
+         counter,
+         retries,
+         acc
+       ) do
+    # Remove the expired entries from disk
+    :ok = remove_expired_entries_from_disk(victims, meta_table, cache_path, counter, retries)
+
+    # Continue with the next selection
+    cont
+    |> :ets.select()
+    |> remove_expired_entries(
+      meta_table,
+      match_spec,
+      cache_path,
+      counter,
+      retries,
+      acc + Enum.count(victims)
+    )
+  end
+
+  defp remove_expired_entries_from_disk(victims, meta_table, cache_path, counter, retries) do
+    Enum.each(victims, fn {hash_key, bin_size} ->
+      path = cache_key_path(cache_path, hash_key)
+
+      with_lock(hash_key, retries, fn ->
+        with :ok <- safe_remove(meta_table, hash_key, path) do
+          # Update the max bytes counter
+          :ok = :counters.sub(counter, 1, bin_size)
+
+          {:error, :expired}
+        end
+      end)
+    end)
   end
 
   ## Internal meta functions

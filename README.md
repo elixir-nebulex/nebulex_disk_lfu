@@ -19,8 +19,22 @@ This adapter is ideal for workloads that require:
 - Concurrency-safe operations for both reads and writes.
 - Customizable eviction strategies.
 
-See the [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)
-document for more information.
+## Features
+
+- **LFU Eviction** - Least Frequently Used eviction when disk capacity is
+  exceeded.
+- **TTL Support** - Per-entry time-to-live with lazy and proactive cleanup.
+- **Proactive Eviction** - Automatic periodic cleanup of expired entries via
+  `:eviction_timeout`.
+- **Manual Cleanup** - Direct API for explicit expired entry removal with
+  `delete_all(query: :expired)`.
+- **Concurrent Access** - Safe read/write operations with atomic guarantees
+  per key.
+- **Persistent** - Survives application restarts with fast recovery from disk.
+
+For comprehensive information on architecture, features, and configuration, see the
+[Full Documentation](http://hexdocs.pm/nebulex_disk_lfu) and
+[Architecture Guide](http://hexdocs.pm/nebulex_disk_lfu/architecture.html).
 
 ---
 > [!NOTE]
@@ -47,7 +61,7 @@ for more information.
 
 ## Usage
 
-You can define a cache using as follows:
+Define your cache module:
 
 ```elixir
 defmodule MyApp.Cache do
@@ -57,14 +71,30 @@ defmodule MyApp.Cache do
 end
 ```
 
-Where the configuration for the cache must be in your application
-environment, usually defined in your `config/config.exs`:
+Configure your cache in `config/config.exs`:
 
 ```elixir
 config :my_app, MyApp.Cache,
   root_path: "/var/cache",
-  ...
+  max_bytes: 10_000_000,               # 10MB capacity
+  eviction_timeout: :timer.minutes(5)  # Clean expired entries every 5 minutes
 ```
+
+Then use it in your application:
+
+```elixir
+# Write a value
+MyApp.Cache.put(:key, "value", expires_at: :timer.hours(1))
+
+# Read a value
+MyApp.Cache.get(:key)
+
+# Delete expired entries manually
+MyApp.Cache.delete_all(query: :expired)
+```
+
+For detailed API documentation, configuration options, and more examples, see the
+[Adapter Documentation](http://hexdocs.pm/nebulex_disk_lfu/Nebulex.Adapters.DiskLFU.html).
 
 ## Benchmarks
 
@@ -77,9 +107,18 @@ To run the benchmarks:
 mix run benchmarks/benchmark.exs
 ```
 
+## Documentation
+
+- **[Full Adapter Documentation](http://hexdocs.pm/nebulex_disk_lfu/Nebulex.Adapters.DiskLFU.html)** -
+  Complete API reference and configuration options.
+- **[Architecture Guide](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)** -
+  Design, eviction strategy, and concurrency model.
+- **[Nebulex Documentation](https://hexdocs.pm/nebulex)** -
+  General cache framework documentation.
+
 ## Contributing
 
-Contributions to Nebulex are very welcome and appreciated!
+Contributions to `Nebulex.Adapters.DiskLFU` are very welcome and appreciated!
 
 Use the [issue tracker](http://github.com/elixir-nebulex/nebulex_disk_lfu/issues)
 for bug reports or feature requests. Open a

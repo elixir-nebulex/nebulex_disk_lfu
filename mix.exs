@@ -2,7 +2,7 @@ defmodule NebulexDiskLFU.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_disk_lfu"
-  @version "3.0.0-dev"
+  @version "3.0.0-rc.1"
   @nbx_version "3.0.0-rc.2"
 
   def project do

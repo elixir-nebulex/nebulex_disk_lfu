@@ -20,9 +20,12 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
       required: false,
       default: nil,
       doc: """
-      The maximum cache size in bytes. When exceeded, LFU eviction is triggered.
+      The maximum cache size in bytes. When exceeded, LFU eviction is triggered
+      to remove the least frequently used entries until the size falls below
+      this limit.
 
-      When `nil` (default), the cache has no size-based eviction limit.
+      When `nil` (default), the cache has no size-based eviction limit. Note
+      that TTL-based expiration still applies if entries have `:ttl` set.
       """
     ],
     eviction_victim_limit: [
@@ -58,7 +61,8 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
 
       Metadata is updated in memory for performance, then periodically written
       to disk at this interval to minimize I/O overhead. When `nil`, metadata
-      is not persisted automatically (only on shutdown).
+      is not persisted periodically, but is still persisted during graceful
+      shutdown to ensure consistency on restart.
       """
     ],
     eviction_timeout: [
@@ -70,7 +74,8 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
 
       When set, a background timer triggers automatic cleanup of all expired
       entries at the specified interval. When `nil` (default), expired entries
-      are removed lazily (on access) or manually via `delete_all(query: :expired)`.
+      are removed lazily (on access) or manually via
+      `delete_all(query: :expired)`.
 
       **Example:**
 
@@ -79,6 +84,7 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
         root_path: "/tmp/my_cache",
         eviction_timeout: :timer.minutes(5)
       ```
+
       """
     ]
   ]
@@ -86,14 +92,15 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
   # Common runtime options
   common_runtime_opts = [
     retries: [
-      type: :timeout,
+      type: {:or, [:non_neg_integer, {:in, [:infinity]}]},
       required: false,
       default: :infinity,
       doc: """
-      The number of times to retry an operation if it fails due to contention.
+      The maximum number of times to retry an operation when blocked by locks.
 
-      Retries occur when concurrent operations lock the same key or resource.
-      Set to `:infinity` to retry indefinitely (default).
+      Operations retry when another process holds a lock on the same key or
+      resource. Set to a non-negative integer for a maximum retry count, or
+      `:infinity` (default) to retry indefinitely until the lock is released.
       """
     ]
   ]
@@ -111,9 +118,10 @@ defmodule Nebulex.Adapters.DiskLFU.Options do
 
       - `:binary` (default) - Returns the cache value as a binary.
       - `:metadata` - Returns the entry metadata instead of the value.
-      - `:symlink` - Returns a temporary read-only symlink to the file.
-        **Only supported for `fetch` and `get` operations.** Modifying the file
-        can cause unexpected behavior.
+      - `:symlink` - Returns a temporary read-only symlink to the cached file.
+        **Only supported for `fetch` and `get` operations.** The symlink is
+        automatically cleaned up after use. Useful for passing large files to
+        external tools without loading them into memory. Do not modify the file.
       - A function/2 - A callback receiving `(binary, metadata)` that transforms
         and returns a custom value.
 

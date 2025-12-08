@@ -1,5 +1,5 @@
 # Nebulex.Adapters.DiskLFU
-> A Nebulex adapter for a disk-based LFU cache.
+> Persistent disk-based cache adapter with LFU eviction for Nebulex.
 
 ![CI](http://github.com/elixir-nebulex/nebulex_disk_lfu/workflows/CI/badge.svg)
 [![Codecov](http://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)](http://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)
@@ -36,14 +36,6 @@ For comprehensive information on architecture, features, and configuration, see 
 [Full Documentation](http://hexdocs.pm/nebulex_disk_lfu) and
 [Architecture Guide](http://hexdocs.pm/nebulex_disk_lfu/architecture.html).
 
----
-> [!NOTE]
->
-> _**Still under development!**_
->
-> `Nebulex.Adapters.DiskLFU` is only compatible with Nebulex v3.0.0 or later.
----
-
 ## Installation
 
 Add `:nebulex_disk_lfu` to your list of dependencies in `mix.exs`:
@@ -51,10 +43,14 @@ Add `:nebulex_disk_lfu` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:nebulex_disk_lfu, "~> 0.1"}
+    {:nebulex_disk_lfu, "~> 3.0.0-rc.1"},
+    {:telemetry, "~> 0.4 or ~> 1.0"}  # For observability/telemetry support
   ]
 end
 ```
+
+The `:telemetry` dependency is optional but highly recommended for observability
+and monitoring cache operations.
 
 See the [online documentation](http://hexdocs.pm/nebulex_disk_lfu/)
 for more information.
@@ -80,11 +76,24 @@ config :my_app, MyApp.Cache,
   eviction_timeout: :timer.minutes(5)  # Clean expired entries every 5 minutes
 ```
 
+Add the cache to your application supervision tree:
+
+```elixir
+def start(_type, _args) do
+  children = [
+    {MyApp.Cache, []},
+    # ... other children
+  ]
+
+  Supervisor.start_link(children, strategy: :one_for_one)
+end
+```
+
 Then use it in your application:
 
 ```elixir
-# Write a value
-MyApp.Cache.put(:key, "value", expires_at: :timer.hours(1))
+# Write a value with TTL
+MyApp.Cache.put(:key, "value", ttl: :timer.hours(1))
 
 # Read a value
 MyApp.Cache.get(:key)
@@ -129,7 +138,7 @@ When submitting a pull request you should not update the
 [CHANGELOG.md](CHANGELOG.md), and also make sure you test your changes
 thoroughly, include unit tests alongside new or changed code.
 
-Before to submit a PR it is highly recommended to run `mix test.ci` and ensure
+Before submitting a PR it is highly recommended to run `mix test.ci` and ensure
 all checks run successfully.
 
 ## Sponsor

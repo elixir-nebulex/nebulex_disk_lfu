@@ -20,8 +20,67 @@ defmodule Nebulex.Adapters.DiskLFU do
   the local file system with LFU eviction and TTL handling, reducing latency
   and cloud egress costs.
 
-  See the [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)
-  document for more information.
+  See the [Architecture](architecture.html) document for more information.
+
+  ## Features
+
+  - **LFU Eviction** - Least Frequently Used eviction when disk capacity is
+    exceeded.
+  - **TTL Support** - Per-entry time-to-live with lazy and proactive cleanup.
+  - **Proactive Eviction** - Automatic periodic cleanup of expired entries via
+    `:eviction_timeout`.
+  - **Manual Cleanup** - Direct API for explicit expired entry removal with
+    `delete_all(query: :expired)`.
+  - **Concurrent Access** - Safe read/write operations with atomic guarantees
+    per key.
+  - **Persistent** - Survives application restarts with fast recovery from disk.
+
+  ## Usage
+
+  Define your cache module:
+
+  ```elixir
+  defmodule MyApp.Cache do
+    use Nebulex.Cache,
+      otp_app: :my_app,
+      adapter: Nebulex.Adapters.DiskLFU
+  end
+  ```
+
+  Configure your cache in `config/config.exs`:
+
+  ```elixir
+  config :my_app, MyApp.Cache,
+    root_path: "/var/cache",
+    max_bytes: 10_000_000,               # 10MB capacity
+    eviction_timeout: :timer.minutes(5)  # Clean expired entries every 5 minutes
+  ```
+
+  Add the cache to your application supervision tree:
+
+  ```elixir
+  def start(_type, _args) do
+    children = [
+      {MyApp.Cache, []},
+      # ... other children
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
+  end
+  ```
+
+  Then use it in your application:
+
+  ```elixir
+  # Write a value with TTL
+  MyApp.Cache.put(:key, "value", ttl: :timer.hours(1))
+
+  # Read a value
+  MyApp.Cache.get(:key)
+
+  # Delete expired entries manually
+  MyApp.Cache.delete_all(query: :expired)
+  ```
 
   ## Startup options
 
@@ -69,7 +128,8 @@ defmodule Nebulex.Adapters.DiskLFU do
       }
       ```
 
-  * `telemetry_prefix ++ [:eviction, :stop]` - Dispatched when eviction completes.
+  * `telemetry_prefix ++ [:eviction, :stop]` - Dispatched when eviction
+    completes.
 
     * Measurements: `%{duration: non_neg_integer()}`
     * Metadata:
@@ -84,7 +144,8 @@ defmodule Nebulex.Adapters.DiskLFU do
       }
       ```
 
-  * `telemetry_prefix ++ [:eviction, :exception]` - Dispatched when eviction fails.
+  * `telemetry_prefix ++ [:eviction, :exception]` - Dispatched when eviction
+    fails.
 
     * Measurements: `%{duration: non_neg_integer()}`
     * Metadata:
@@ -160,7 +221,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   * `telemetry_prefix ++ [:persist_meta, :stop]` - Dispatched when metadata
     persistence completes.
 
-    * Measurements: `%{system_time: non_neg_integer()}`
+    * Measurements: `%{duration: non_neg_integer()}`
     * Metadata:
 
       ```
@@ -179,7 +240,6 @@ defmodule Nebulex.Adapters.DiskLFU do
       ```
       %{
         store_pid: pid(),
-        count: non_neg_integer(),
         kind: :error | :exit | :throw,
         reason: term(),
         stacktrace: [term()]
@@ -203,7 +263,7 @@ defmodule Nebulex.Adapters.DiskLFU do
 
   ## Queryable API
 
-  This adapter supports the `Nebulex.Adapter.Queryable` behavior with a limited
+  This adapter supports the `Nebulex.Adapter.Queryable` behaviour with a limited
   query interface. The following query options are available for queryable
   operations like `delete_all/2`, `count_all/2`, and `get_all/2`:
 
@@ -244,13 +304,17 @@ defmodule Nebulex.Adapters.DiskLFU do
   For more information about automatic eviction, see the
   [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html) guide.
 
-  ## CAVEATS
+  ## Limitations and Considerations
 
   ### Unsupported Operations
 
   - `incr/3` and `decr/3` are not supported.
   - `put_new/3`, `replace/3`, and `put_new_all/2` are not supported. They work
     as `put` operations instead. Support is planned for a future release.
+  - The `Nebulex.Adapters.Common.Info` behaviour is not implemented. Support
+    for cache introspection and statistics is planned for a future release.
+  - The `Nebulex.Adapter.Observable` behaviour is not implemented. Support for
+    cache entry events is planned for a future release.
 
   ### Query Operation Limitations
 
@@ -287,7 +351,7 @@ defmodule Nebulex.Adapters.DiskLFU do
 
   alias __MODULE__.{Meta, Options, Store}
 
-  @typedoc "The return function of the fetch operation."
+  @typedoc "The return function for the fetch operation."
   @type return_fn() :: (binary(), Meta.t() -> any())
 
   ## Nebulex.Adapter

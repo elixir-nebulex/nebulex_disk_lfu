@@ -1,8 +1,9 @@
 defmodule NebulexDiskLFU.MixProject do
   use Mix.Project
 
-  @source_url "http://github.com/elixir-nebulex/nebulex_disk_lfu"
-  @version "0.1.0"
+  @source_url "https://github.com/elixir-nebulex/nebulex_disk_lfu"
+  @version "3.0.0-dev"
+  @nbx_version "3.0.0-rc.2"
 
   def project do
     [
@@ -15,24 +16,29 @@ defmodule NebulexDiskLFU.MixProject do
 
       # Testing
       test_coverage: [tool: ExCoveralls],
-      preferred_cli_env: [
-        coveralls: :test,
-        "coveralls.detail": :test,
-        "coveralls.post": :test,
-        "coveralls.html": :test,
-        "test.ci": :test
-      ],
 
       # Dialyzer
       dialyzer: dialyzer(),
 
       # Hex
       package: package(),
-      description: "A Nebulex adapter for DiskLFU",
+      description: "Persistent disk-based cache adapter with LFU eviction for Nebulex",
 
       # Docs
       name: "Nebulex.Adapters.DiskLFU",
       docs: docs()
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.post": :test,
+        "coveralls.html": :test,
+        "test.ci": :test
+      ]
     ]
   end
 
@@ -41,7 +47,7 @@ defmodule NebulexDiskLFU.MixProject do
 
   defp deps do
     [
-      {:nebulex, github: "elixir-nebulex/nebulex", branch: "main"},
+      {:nebulex, "~> #{@nbx_version}"},
       {:nimble_options, "~> 0.5 or ~> 1.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
@@ -49,16 +55,16 @@ defmodule NebulexDiskLFU.MixProject do
       {:excoveralls, "~> 0.18", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      {:sobelow, "~> 0.13", only: [:dev, :test], runtime: false},
+      {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
       {:briefly, "~> 0.5", only: [:dev, :test]},
       {:mimic, "~> 1.7", only: :test},
 
       # Benchmark Test
-      {:benchee, "~> 1.3", only: [:dev, :test]},
+      {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
 
       # Docs
-      {:ex_doc, "~> 0.36", only: [:dev, :test], runtime: false}
+      {:ex_doc, "~> 0.39", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -89,7 +95,7 @@ defmodule NebulexDiskLFU.MixProject do
     [
       main: "Nebulex.Adapters.DiskLFU",
       source_ref: "v#{@version}",
-      canonical: "http://hexdocs.pm/nebulex_disk_lfu",
+      canonical: "https://hexdocs.pm/nebulex_disk_lfu",
       source_url: @source_url,
       extra_section: "GUIDES",
       extras: extras()

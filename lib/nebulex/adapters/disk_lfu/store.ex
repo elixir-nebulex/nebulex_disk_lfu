@@ -561,16 +561,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
   defp persist_meta(meta_table, cache_path, telemetry_prefix) do
     # Define the persist function
     persist_fun = fn meta(key: hash_key) = meta, acc ->
-      fun = fn ->
-        path = cache_key_path(cache_path, hash_key)
-        meta_tmp = path <> ".meta.tmp"
-        meta_final = path <> ".meta"
-
-        with :ok <- File.write(meta_tmp, encode_meta(meta)),
-             :ok <- File.rename(meta_tmp, meta_final) do
-          acc + 1
-        end
-      end
+      fun = fn -> persist_meta_fun(cache_path, hash_key, meta, acc) end
 
       with {:error, :lock_timeout} <- with_lock(hash_key, @default_lock_retries, fun) do
         # If a timeout occurs, skip the file and return the accumulator
@@ -594,6 +585,17 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
     end)
   end
 
+  defp persist_meta_fun(cache_path, hash_key, meta, acc) do
+    path = cache_key_path(cache_path, hash_key)
+    meta_tmp = path <> ".meta.tmp"
+    meta_final = path <> ".meta"
+
+    with :ok <- File.write(meta_tmp, encode_meta(meta)),
+         :ok <- File.rename(meta_tmp, meta_final) do
+      acc + 1
+    end
+  end
+
   defp with_meta(meta_table, counter_ref, hash_key, path, retries, lock? \\ true, fun) do
     now = now()
 
@@ -601,12 +603,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       [meta(key: ^hash_key, expires_at: expires_at, size_bytes: bin_size)]
       when is_integer(expires_at) and expires_at <= now ->
         with_lock(hash_key, retries, fn ->
-          with :ok <- safe_remove(meta_table, hash_key, path) do
-            # Update the max bytes counter
-            :ok = :counters.sub(counter_ref, 1, bin_size)
-
-            {:error, :expired}
-          end
+          with_expired_meta(meta_table, counter_ref, hash_key, path, bin_size)
         end)
 
       [meta(key: ^hash_key) = meta] when lock? == true ->
@@ -617,6 +614,15 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
 
       [] ->
         {:error, :not_found}
+    end
+  end
+
+  defp with_expired_meta(meta_table, counter_ref, hash_key, path, bin_size) do
+    with :ok <- safe_remove(meta_table, hash_key, path) do
+      # Update the max bytes counter
+      :ok = :counters.sub(counter_ref, 1, bin_size)
+
+      {:error, :expired}
     end
   end
 
@@ -937,12 +943,7 @@ defmodule Nebulex.Adapters.DiskLFU.Store do
       path = cache_key_path(cache_path, hash_key)
 
       with_lock(hash_key, retries, fn ->
-        with :ok <- safe_remove(meta_table, hash_key, path) do
-          # Update the max bytes counter
-          :ok = :counters.sub(counter, 1, bin_size)
-
-          {:error, :expired}
-        end
+        with_expired_meta(meta_table, counter, hash_key, path, bin_size)
       end)
     end)
   end

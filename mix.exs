@@ -2,8 +2,8 @@ defmodule NebulexDiskLFU.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_disk_lfu"
-  @version "3.0.0-rc.1"
-  @nbx_version "3.0.0-rc.2"
+  @version "3.0.0-dev"
+  # @nbx_version "3.0.0"
 
   def project do
     [
@@ -19,6 +19,9 @@ defmodule NebulexDiskLFU.MixProject do
 
       # Dialyzer
       dialyzer: dialyzer(),
+
+      # Usage Rules
+      usage_rules: usage_rules(),
 
       # Hex
       package: package(),
@@ -47,7 +50,8 @@ defmodule NebulexDiskLFU.MixProject do
 
   defp deps do
     [
-      {:nebulex, "~> #{@nbx_version}"},
+      {:nebulex, github: "elixir-nebulex/nebulex", branch: "main"},
+      {:nebulex_local, github: "elixir-nebulex/nebulex_local", branch: "main"},
       {:nimble_options, "~> 0.5 or ~> 1.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
@@ -57,14 +61,14 @@ defmodule NebulexDiskLFU.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
       {:briefly, "~> 0.5", only: [:dev, :test]},
-      {:mimic, "~> 1.7", only: :test},
+      {:mimic, "~> 2.0", only: :test},
 
       # Benchmark Test
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
 
       # Docs
-      {:ex_doc, "~> 0.39", only: [:dev, :test], runtime: false}
+      {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -78,7 +82,8 @@ defmodule NebulexDiskLFU.MixProject do
         "coveralls.html",
         "sobelow -i Traversal.FileModule --exit --skip",
         "dialyzer --format short"
-      ]
+      ],
+      "ur.sync": ["usage_rules.sync"]
     ]
   end
 
@@ -115,14 +120,33 @@ defmodule NebulexDiskLFU.MixProject do
       plt_file: {:no_warn, "priv/plts/" <> plt_file_name()},
       flags: [
         :error_handling,
+        :extra_return,
         :no_opaque,
-        :unknown,
         :no_return
       ]
     ]
   end
 
   defp plt_file_name do
-    "dialyzer-#{Mix.env()}-#{System.otp_release()}-#{System.version()}.plt"
+    "dialyzer-#{Mix.env()}-#{System.version()}-#{System.otp_release()}.plt"
+  end
+
+  defp usage_rules do
+    [
+      # The file to write usage rules into (required for usage_rules syncing)
+      file: "AGENTS.md",
+
+      # rules to include directly in CLAUDE.md
+      usage_rules: ["nebulex:all"],
+
+      # Agent skills configuration
+      skills: [
+        # The location of the skills directory
+        location: ".claude/skills",
+
+        # Auto-build a "use-<pkg>" skill per dependency
+        deps: [:nebulex]
+      ]
+    ]
   end
 end

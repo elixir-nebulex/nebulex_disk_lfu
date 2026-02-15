@@ -1,7 +1,7 @@
 defmodule Nebulex.Adapters.DiskLFUEvictionTest do
   use ExUnit.Case, async: true
-  use Mimic
 
+  import Mimic, only: [stub: 3, allow: 3]
   import Nebulex.Adapters.DiskLFU.TestUtils
 
   alias Nebulex.Adapter

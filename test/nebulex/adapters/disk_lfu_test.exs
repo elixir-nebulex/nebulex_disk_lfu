@@ -1,6 +1,7 @@
 defmodule Nebulex.Adapters.DiskLFUTest do
   use ExUnit.Case, async: true
-  use Mimic
+
+  import Mimic, only: [expect: 3, expect: 4]
 
   defmodule DiskCache do
     use Nebulex.Cache,
@@ -53,7 +54,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       File
-      |> Mimic.expect(:ln_s, fn _, _ -> {:error, :eexist} end)
+      |> expect(:ln_s, fn _, _ -> {:error, :eexist} end)
 
       assert {:ok, _symlink} = cache.fetch("key", return: :symlink)
     end
@@ -62,7 +63,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       File
-      |> Mimic.expect(:ln_s, fn _, _ -> {:error, :enotsup} end)
+      |> expect(:ln_s, fn _, _ -> {:error, :enotsup} end)
 
       assert_raise Nebulex.Error, "could not fetch key \"key\": operation not supported", fn ->
         cache.fetch!("key", return: :symlink)
@@ -81,7 +82,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       File
-      |> Mimic.expect(:read, fn _ -> {:error, :enoent} end)
+      |> expect(:read, fn _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.KeyError{reason: :not_found}} = cache.fetch("key")
     end
@@ -126,7 +127,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
     test "error: rollback on error", %{cache: cache} do
       File
-      |> Mimic.expect(:rename, fn _, _ -> {:error, :enoent} end)
+      |> expect(:rename, fn _, _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.put("key", "value")
       assert cache.has_key?("key") == {:ok, false}
@@ -174,7 +175,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
 
     test "error: rollback on error", %{cache: cache} do
       File
-      |> Mimic.expect(:rename, fn _, _ -> {:error, :enoent} end)
+      |> expect(:rename, fn _, _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.put_all([{"key", "value"}])
       assert cache.has_key?("key") == {:ok, false}
@@ -293,7 +294,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = Process.sleep(100)
 
       Nebulex.Adapters.DiskLFU.Store
-      |> Mimic.expect(:fetch_meta, fn _, _, _ -> {:error, :enoent} end)
+      |> expect(:fetch_meta, fn _, _, _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.has_key?("key")
     end
@@ -352,7 +353,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       File
-      |> Mimic.expect(:read, fn _ -> {:error, :enoent} end)
+      |> expect(:read, fn _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.expire("key", 1000)
     end
@@ -385,7 +386,7 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key", "value")
 
       File
-      |> Mimic.expect(:read, fn _ -> {:error, :enoent} end)
+      |> expect(:read, fn _ -> {:error, :enoent} end)
 
       assert {:error, %Nebulex.Error{reason: :enoent}} = cache.touch("key")
     end
@@ -470,14 +471,12 @@ defmodule Nebulex.Adapters.DiskLFUTest do
       :ok = cache.put("key2", "value2")
 
       Nebulex.Adapters.DiskLFU.Store
-      |> expect(:delete_from_disk, fn _, _, _ -> {:error, :enoent} end)
+      |> expect(:delete_from_disk, 2, fn _, _, _ -> {:error, :enoent} end)
 
-      assert cache.delete_all(in: ["key1", "key2"]) == {:ok, 1}
+      assert cache.delete_all(in: ["key1", "key2"]) == {:ok, 0}
 
       assert cache.has_key?("key1") == {:ok, true}
-
-      # The key2 should not be deleted because the delete_from_disk failed
-      assert cache.has_key?("key2") == {:ok, false}
+      assert cache.has_key?("key2") == {:ok, true}
     end
   end
 
@@ -540,23 +539,107 @@ defmodule Nebulex.Adapters.DiskLFUTest do
   describe "transaction" do
     setup :setup_cache
 
-    test "ok: succeeds with default keys", %{cache: cache} do
+    test "ok: single transaction", %{cache: cache} do
       assert cache.transaction(fn ->
-               cache.put("key", "value")
-             end) == {:ok, :ok}
+               :ok = cache.put!("tx-single", "value1")
+
+               "value1" = cache.fetch!("tx-single")
+
+               :ok = cache.delete!("tx-single")
+
+               cache.get!("tx-single")
+             end) == {:ok, nil}
     end
 
-    test "ok: succeeds with the given keys", %{cache: cache} do
+    test "ok: nested transaction", %{cache: cache} do
       assert cache.transaction(
                fn ->
-                 cache.put("key1", "value1")
-                 cache.put("key2", "value2")
-               end,
-               keys: ["key1", "key2"]
-             ) == {:ok, :ok}
+                 cache.transaction(
+                   fn ->
+                     :ok = cache.put!("tx-nested", "value1")
 
-      assert cache.fetch("key1") == {:ok, "value1"}
-      assert cache.fetch("key2") == {:ok, "value2"}
+                     "value1" = cache.fetch!("tx-nested")
+
+                     :ok = cache.delete!("tx-nested")
+
+                     cache.get!("tx-nested")
+                   end,
+                   keys: ["tx-nested"]
+                 )
+               end,
+               keys: ["tx-nested"]
+             ) == {:ok, {:ok, nil}}
+    end
+
+    test "ok: single transaction with read and write operations", %{cache: cache} do
+      assert cache.put("tx-read-write", "old value") == :ok
+      assert cache.fetch!("tx-read-write") == "old value"
+
+      assert cache.transaction(
+               fn ->
+                 "old value" = value = cache.fetch!("tx-read-write")
+
+                 :ok = cache.put!("tx-read-write", "new value" <> value)
+
+                 cache.fetch!("tx-read-write")
+               end,
+               keys: ["tx-read-write"]
+             ) == {:ok, "new value" <> "old value"}
+
+      assert cache.fetch!("tx-read-write") == "new value" <> "old value"
+    end
+
+    test "error: exception is raised", %{cache: cache} do
+      assert_raise MatchError, fn ->
+        cache.transaction(fn ->
+          :ok = cache.put!("tx-exception", "value1")
+
+          "value1" = cache.fetch!("tx-exception")
+
+          :ok = cache.delete!("tx-exception")
+
+          :ok = cache.get("tx-exception")
+        end)
+      end
+    end
+
+    test "aborted", %{cache: cache} do
+      key = "tx-aborted"
+
+      Task.start_link(fn ->
+        cache.transaction(
+          fn ->
+            :ok = cache.put(key, "true")
+
+            Process.sleep(1500)
+          end,
+          keys: [key],
+          retries: 1
+        )
+      end)
+
+      :ok = Process.sleep(500)
+
+      assert {:error, %Nebulex.Error{reason: :transaction_aborted}} =
+               cache.transaction(
+                 fn -> cache.get!(key) end,
+                 keys: [key],
+                 retries: 1
+               )
+    end
+  end
+
+  describe "in_transaction?" do
+    setup :setup_cache
+
+    test "returns true if calling process is already within a transaction", %{cache: cache} do
+      assert cache.in_transaction?() == {:ok, false}
+
+      cache.transaction(fn ->
+        :ok = cache.put("tx1", "value1")
+
+        assert cache.in_transaction?() == {:ok, true}
+      end)
     end
   end
 

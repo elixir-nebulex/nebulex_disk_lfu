@@ -1,10 +1,10 @@
 # Nebulex.Adapters.DiskLFU
 > Persistent disk-based cache adapter with LFU eviction for Nebulex.
 
-![CI](http://github.com/elixir-nebulex/nebulex_disk_lfu/workflows/CI/badge.svg)
-[![Codecov](http://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)](http://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)
-[![Hex Version](http://img.shields.io/hexpm/v/nebulex_disk_lfu.svg)](http://hex.pm/packages/nebulex_disk_lfu)
-[![Documentation](http://img.shields.io/badge/Documentation-ff69b4)](http://hexdocs.pm/nebulex_disk_lfu)
+![CI](https://github.com/elixir-nebulex/nebulex_disk_lfu/workflows/CI/badge.svg)
+[![Codecov](https://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu/graph/badge.svg)](https://codecov.io/gh/elixir-nebulex/nebulex_disk_lfu)
+[![Hex Version](https://img.shields.io/hexpm/v/nebulex_disk_lfu.svg)](https://hex.pm/packages/nebulex_disk_lfu)
+[![Documentation](https://img.shields.io/badge/Documentation-ff69b4)](https://hexdocs.pm/nebulex_disk_lfu)
 
 ## About
 
@@ -33,8 +33,8 @@ This adapter is ideal for workloads that require:
 - **Persistent** - Survives application restarts with fast recovery from disk.
 
 For comprehensive information on architecture, features, and configuration, see the
-[Full Documentation](http://hexdocs.pm/nebulex_disk_lfu) and
-[Architecture Guide](http://hexdocs.pm/nebulex_disk_lfu/architecture.html).
+[Full Documentation](https://hexdocs.pm/nebulex_disk_lfu) and
+[Architecture Guide](https://hexdocs.pm/nebulex_disk_lfu/architecture.html).
 
 ## Installation
 
@@ -43,7 +43,7 @@ Add `:nebulex_disk_lfu` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:nebulex_disk_lfu, "~> 3.0.0-rc.1"},
+    {:nebulex_disk_lfu, "~> 3.0"},
     {:telemetry, "~> 0.4 or ~> 1.0"}  # For observability/telemetry support
   ]
 end
@@ -52,7 +52,7 @@ end
 The `:telemetry` dependency is optional but highly recommended for observability
 and monitoring cache operations.
 
-See the [online documentation](http://hexdocs.pm/nebulex_disk_lfu/)
+See the [online documentation](https://hexdocs.pm/nebulex_disk_lfu/)
 for more information.
 
 ## Usage
@@ -103,11 +103,11 @@ MyApp.Cache.delete_all(query: :expired)
 ```
 
 For detailed API documentation, configuration options, and more examples, see the
-[Adapter Documentation](http://hexdocs.pm/nebulex_disk_lfu/Nebulex.Adapters.DiskLFU.html).
+[Adapter Documentation](https://hexdocs.pm/nebulex_disk_lfu/Nebulex.Adapters.DiskLFU.html).
 
 ## Benchmarks
 
-Benchmarks were added using [benchee](http://github.com/PragTob/benchee), and
+Benchmarks were added using [benchee](https://github.com/PragTob/benchee), and
 they are located within the directory [benchmarks](./benchmarks).
 
 To run the benchmarks:
@@ -118,9 +118,9 @@ mix run benchmarks/benchmark.exs
 
 ## Documentation
 
-- **[Full Adapter Documentation](http://hexdocs.pm/nebulex_disk_lfu/Nebulex.Adapters.DiskLFU.html)** -
+- **[Full Adapter Documentation](https://hexdocs.pm/nebulex_disk_lfu/Nebulex.Adapters.DiskLFU.html)** -
   Complete API reference and configuration options.
-- **[Architecture Guide](http://hexdocs.pm/nebulex_disk_lfu/architecture.html)** -
+- **[Architecture Guide](https://hexdocs.pm/nebulex_disk_lfu/architecture.html)** -
   Design, eviction strategy, and concurrency model.
 - **[Nebulex Documentation](https://hexdocs.pm/nebulex)** -
   General cache framework documentation.
@@ -129,9 +129,9 @@ mix run benchmarks/benchmark.exs
 
 Contributions to `Nebulex.Adapters.DiskLFU` are very welcome and appreciated!
 
-Use the [issue tracker](http://github.com/elixir-nebulex/nebulex_disk_lfu/issues)
+Use the [issue tracker](https://github.com/elixir-nebulex/nebulex_disk_lfu/issues)
 for bug reports or feature requests. Open a
-[pull request](http://github.com/elixir-nebulex/nebulex_disk_lfu/pulls)
+[pull request](https://github.com/elixir-nebulex/nebulex_disk_lfu/pulls)
 when you are ready to contribute.
 
 When submitting a pull request you should not update the
@@ -143,7 +143,7 @@ all checks run successfully.
 
 ## Sponsor
 
-- [StanfordTax](http://stanfordtax.com/)
+- [StanfordTax](https://stanfordtax.com/)
 
 ## Copyright and License
 

@@ -302,7 +302,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   at startup.
 
   For more information about automatic eviction, see the
-  [Architecture](http://hexdocs.pm/nebulex_disk_lfu/architecture.html) guide.
+  [Architecture](guides/learning/architecture.md) guide.
 
   ## Limitations and Considerations
 
@@ -340,9 +340,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   @behaviour Nebulex.Adapter
   @behaviour Nebulex.Adapter.KV
   @behaviour Nebulex.Adapter.Queryable
-
-  # Inherit default transaction implementation
-  use Nebulex.Adapter.Transaction
+  @behaviour Nebulex.Adapter.Transaction
 
   import Nebulex.Adapter
   import Nebulex.Adapters.DiskLFU.Helpers
@@ -350,6 +348,7 @@ defmodule Nebulex.Adapters.DiskLFU do
   import Nebulex.Utils
 
   alias __MODULE__.{Meta, Options, Store}
+  alias __MODULE__.Transaction.Options, as: TransactionOptions
 
   @typedoc "The return function for the fetch operation."
   @type return_fn() :: (binary(), Meta.t() -> any())
@@ -675,7 +674,90 @@ defmodule Nebulex.Adapters.DiskLFU do
     {:ok, stream}
   end
 
+  ## Nebulex.Adapter.Transaction
+
+  @impl true
+  def transaction(%{cache: cache, pid: pid} = adapter_meta, fun, opts) do
+    opts = TransactionOptions.validate!(opts)
+
+    adapter_meta
+    |> do_in_transaction?()
+    |> do_transaction(
+      pid,
+      adapter_meta[:name] || cache,
+      Keyword.fetch!(opts, :keys),
+      Keyword.fetch!(opts, :retries),
+      fun
+    )
+  end
+
+  @impl true
+  def in_transaction?(adapter_meta, _opts) do
+    wrap_ok do_in_transaction?(adapter_meta)
+  end
+
   ## Private functions
+
+  defp do_in_transaction?(%{pid: pid}) do
+    !!Process.get({pid, self()})
+  end
+
+  defp do_transaction(true, _pid, _name, _keys, _retries, fun) do
+    {:ok, fun.()}
+  end
+
+  defp do_transaction(false, pid, name, keys, retries, fun) do
+    ids = lock_ids(name, keys)
+
+    case set_locks(ids, retries) do
+      true ->
+        try do
+          _ = Process.put({pid, self()}, keys)
+
+          {:ok, fun.()}
+        after
+          _ = Process.delete({pid, self()})
+
+          del_locks(ids)
+        end
+
+      false ->
+        wrap_error Nebulex.Error, reason: :transaction_aborted, cache: name
+    end
+  end
+
+  defp set_locks(ids, retries) do
+    maybe_set_lock = fn id, {:ok, acc} ->
+      case :global.set_lock(id, [node()], retries) do
+        true -> {:cont, {:ok, [id | acc]}}
+        false -> {:halt, {:error, acc}}
+      end
+    end
+
+    case Enum.reduce_while(ids, {:ok, []}, maybe_set_lock) do
+      {:ok, _} ->
+        true
+
+      {:error, locked_ids} ->
+        :ok = del_locks(locked_ids)
+
+        false
+    end
+  end
+
+  defp del_locks(ids) do
+    Enum.each(ids, &:global.del_lock(&1, [node()]))
+  end
+
+  defp lock_ids(name, []) do
+    [{name, self()}]
+  end
+
+  defp lock_ids(name, keys) do
+    keys
+    |> Enum.uniq()
+    |> Enum.map(&{{name, &1}, self()})
+  end
 
   defp assert_binary(data, arg_name) do
     unless is_binary(data) do

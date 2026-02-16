@@ -67,6 +67,9 @@ defmodule NebulexDiskLFU.MixProject do
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
 
+      # Usage Rules
+      {:usage_rules, "~> 1.0", only: [:dev]},
+
       # Docs
       {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
     ]
@@ -136,14 +139,22 @@ defmodule NebulexDiskLFU.MixProject do
       # The file to write usage rules into (required for usage_rules syncing)
       file: "AGENTS.md",
 
-      # rules to include directly in CLAUDE.md
-      usage_rules: ["nebulex:all"],
+      # rules to include directly in AGENTS.md
+      usage_rules: [
+        {:nebulex,
+         [
+           sub_rules: [
+             "workflow",
+             "nebulex",
+             "elixir-style",
+             "elixir"
+           ]
+         ]},
+        :otp
+      ],
 
       # Agent skills configuration
       skills: [
-        # The location of the skills directory
-        location: ".claude/skills",
-
         # Auto-build a "use-<pkg>" skill per dependency
         deps: [:nebulex]
       ]

@@ -41,3 +41,8 @@ Elixir*
 *.coverdata
 *.cache
 /cache-symlinks
+
+# Claude Code
+CLAUDE.md
+/.claude
+/.cursor

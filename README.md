@@ -149,4 +149,4 @@ all checks run successfully.
 
 Copyright (c) 2025, Carlos Bolaños.
 
-`Nebulex.Adapters.DiskLFU` source code is licensed under the [MIT License](LICENSE).
+`Nebulex.Adapters.DiskLFU` source code is licensed under the [MIT License](LICENSE.md).

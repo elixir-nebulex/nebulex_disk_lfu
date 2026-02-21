@@ -2,8 +2,7 @@ defmodule NebulexDiskLFU.MixProject do
   use Mix.Project
 
   @source_url "https://github.com/elixir-nebulex/nebulex_disk_lfu"
-  @version "3.0.0-dev"
-  # @nbx_version "3.0.0"
+  @version "3.0.0"
 
   def project do
     [
@@ -50,8 +49,8 @@ defmodule NebulexDiskLFU.MixProject do
 
   defp deps do
     [
-      {:nebulex, github: "elixir-nebulex/nebulex", branch: "main"},
-      {:nebulex_local, github: "elixir-nebulex/nebulex_local", branch: "main"},
+      {:nebulex, "~> 3.0"},
+      {:nebulex_local, "~> 3.0"},
       {:nimble_options, "~> 0.5 or ~> 1.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 

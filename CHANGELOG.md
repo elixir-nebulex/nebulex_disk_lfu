@@ -4,8 +4,8 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [v3.0.0](https://github.com/elixir-nebulex/nebulex_disk_lfu/tree/v3.0.0) (2026-02-15)
-> [Full Changelog](https://github.com/elixir-nebulex/nebulex_disk_lfu/compare/.v3.0.0-rc.1...v3.0.0)
+## [v3.0.0](https://github.com/elixir-nebulex/nebulex_disk_lfu/tree/v3.0.0) (2026-02-21)
+> [Full Changelog](https://github.com/elixir-nebulex/nebulex_disk_lfu/compare/v3.0.0-rc.1...v3.0.0)
 
 ### Enhancements
 

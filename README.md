@@ -43,7 +43,7 @@ Add `:nebulex_disk_lfu` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:nebulex_disk_lfu, "~> 3.0"},
+    {:nebulex_disk_lfu, "~> 3.1"},
     {:telemetry, "~> 0.4 or ~> 1.0"}  # For observability/telemetry support
   ]
 end

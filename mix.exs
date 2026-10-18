@@ -49,8 +49,8 @@ defmodule NebulexDiskLFU.MixProject do
 
   defp deps do
     [
-      {:nebulex, "~> 3.0"},
-      {:nebulex_local, "~> 3.0"},
+      nebulex_dep(),
+      {:nebulex_local, "~> 3.1"},
       {:nimble_options, "~> 0.5 or ~> 1.0"},
       {:telemetry, "~> 0.4 or ~> 1.0", optional: true},
 
@@ -72,6 +72,14 @@ defmodule NebulexDiskLFU.MixProject do
       # Docs
       {:ex_doc, "~> 0.40", only: [:dev, :test], runtime: false}
     ]
+  end
+
+  defp nebulex_dep do
+    if path = System.get_env("NEBULEX_PATH") do
+      {:nebulex, path: path, override: true}
+    else
+      {:nebulex, "~> 3.1"}
+    end
   end
 
   defp aliases do

@@ -342,6 +342,9 @@ defmodule Nebulex.Adapters.DiskLFU do
   @behaviour Nebulex.Adapter.Queryable
   @behaviour Nebulex.Adapter.Transaction
 
+  # Inherit default composite KV implementation
+  use Nebulex.Adapter.CompositeKV
+
   import Nebulex.Adapter
   import Nebulex.Adapters.DiskLFU.Helpers
   import Nebulex.Time, only: [now: 0]

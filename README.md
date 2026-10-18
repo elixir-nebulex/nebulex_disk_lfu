@@ -127,19 +127,13 @@ mix run benchmarks/benchmark.exs
 
 ## Contributing
 
-Contributions to `Nebulex.Adapters.DiskLFU` are very welcome and appreciated!
-
 Use the [issue tracker](https://github.com/elixir-nebulex/nebulex_disk_lfu/issues)
-for bug reports or feature requests. Open a
-[pull request](https://github.com/elixir-nebulex/nebulex_disk_lfu/pulls)
-when you are ready to contribute.
+for bug reports and feature requests. Contributions are welcome through
+[pull requests](https://github.com/elixir-nebulex/nebulex_disk_lfu/pulls).
 
-When submitting a pull request you should not update the
-[CHANGELOG.md](CHANGELOG.md), and also make sure you test your changes
-thoroughly, include unit tests alongside new or changed code.
-
-Before submitting a PR it is highly recommended to run `mix test.ci` and ensure
-all checks run successfully.
+Include tests for new or changed behavior, and leave
+[CHANGELOG.md](CHANGELOG.md) unchanged. Before submitting a pull request, run
+`mix precommit` and fix any failures.
 
 ## Sponsor
 

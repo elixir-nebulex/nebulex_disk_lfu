@@ -39,7 +39,7 @@ defmodule NebulexDiskLFU.MixProject do
         "coveralls.detail": :test,
         "coveralls.post": :test,
         "coveralls.html": :test,
-        "test.ci": :test
+        precommit: :test
       ]
     ]
   end
@@ -61,6 +61,7 @@ defmodule NebulexDiskLFU.MixProject do
       {:sobelow, "~> 0.14", only: [:dev, :test], runtime: false},
       {:briefly, "~> 0.5", only: [:dev, :test]},
       {:mimic, "~> 2.0", only: :test},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
 
       # Benchmark Test
       {:benchee, "~> 1.5", only: [:dev, :test]},
@@ -84,14 +85,16 @@ defmodule NebulexDiskLFU.MixProject do
 
   defp aliases do
     [
-      "test.ci": [
+      precommit: [
         "deps.unlock --check-unused",
+        "deps.audit",
         "compile --warnings-as-errors",
         "format --check-formatted",
         "credo --strict",
         "coveralls.html",
-        "sobelow -i Traversal.FileModule --exit --skip",
-        "dialyzer --format short"
+        "sobelow -i Traversal.FileModule --skip --exit Low",
+        "dialyzer --format short",
+        "docs --warnings-as-errors"
       ],
       "ur.sync": ["usage_rules.sync"]
     ]
